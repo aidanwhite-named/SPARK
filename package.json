@@ -1,0 +1,14 @@
+{
+  "name": "spark",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --parallel --filter './packages/*' dev",
+    "build": "pnpm --filter './packages/*' build",
+    "db:migrate": "pnpm --filter backend db:migrate",
+    "db:studio": "pnpm --filter backend db:studio"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
