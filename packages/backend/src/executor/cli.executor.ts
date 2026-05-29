@@ -1,5 +1,13 @@
 import { spawn, SpawnOptions } from 'child_process';
 
+// shell:true 환경에서 args 배열을 커맨드 문자열에 인라인으로 합침 (DEP0190 방지)
+function quoteArgs(command: string, args: string[]): string {
+  const parts = [command, ...args].map(a =>
+    /[ \t"'`]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a
+  );
+  return parts.join(' ');
+}
+
 export interface RunOptions {
   timeout?: number;        // ms
   cwd?: string;
@@ -37,7 +45,12 @@ export class CLIExecutor {
         stdio: ['pipe', 'pipe', 'pipe'],
       };
 
-      const child = spawn(command, args, spawnOpts);
+      // shell:true 시 args를 배열로 전달하면 DEP0190 경고 발생 — 커맨드에 인라인으로 합침
+      const [spawnCmd, spawnArgs] = useShell
+        ? [quoteArgs(command, args), [] as string[]]
+        : [command, args];
+
+      const child = spawn(spawnCmd, spawnArgs, spawnOpts);
 
       if (stdinData && child.stdin) {
         child.stdin.write(stdinData, 'utf8');
@@ -98,7 +111,11 @@ export class CLIExecutor {
         stdio: ['pipe', 'pipe', 'pipe'], // 항상 pipe로 통일 (stdin 제어 위해)
       };
 
-      const child = spawn(command, args, spawnOpts);
+      const [spawnCmd, spawnArgs] = useShell
+        ? [quoteArgs(command, args), [] as string[]]
+        : [command, args];
+
+      const child = spawn(spawnCmd, spawnArgs, spawnOpts);
 
       // stdin으로 프롬프트 전달 후 닫기
       if (stdinData && child.stdin) {

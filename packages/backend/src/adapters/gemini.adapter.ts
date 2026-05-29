@@ -35,14 +35,13 @@ export class GeminiAdapter extends BaseLLMAdapter {
     const start = Date.now();
     const finalPrompt = this.buildFinalPrompt(request);
 
-    // gemini CLI 호출
-    // 사용법: gemini -p "프롬프트" [--model gemini-2.0-flash]
-    const args = ['-p', finalPrompt];
+    // 프롬프트는 stdin으로 전달 — args로 넘기면 shell이 특수문자를 망가뜨림
+    const args: string[] = [];
     if (request.model) {
       args.push('--model', request.model);
     }
 
-    const result = await this.executor.run('gemini', args);
+    const result = await this.executor.run('gemini', args, { stdinData: finalPrompt });
 
     return {
       content: result.stdout.trim(),
@@ -55,8 +54,7 @@ export class GeminiAdapter extends BaseLLMAdapter {
   async stream(request: LLMRequest, onChunk: StreamCallback): Promise<void> {
     const finalPrompt = this.buildFinalPrompt(request);
 
-    // gemini CLI 스트리밍 모드
-    const args = ['-p', finalPrompt];
+    const args: string[] = [];
     if (request.model) {
       args.push('--model', request.model);
     }
@@ -65,7 +63,7 @@ export class GeminiAdapter extends BaseLLMAdapter {
     await this.executor.stream('gemini', args, (line) => {
       buffer += line + '\n';
       onChunk({ type: 'chunk', content: line + '\n' });
-    });
+    }, { stdinData: finalPrompt });
 
     onChunk({ type: 'done', metadata: { content: buffer } });
   }

@@ -20,7 +20,6 @@ export async function patentRoutes(app: FastifyInstance) {
   });
 
   // ── PDF 파싱 ─────────────────────────────────────────────────
-  // parse 결과와 함께 pdfText도 반환 (미니 채팅 컨텍스트용)
   app.post('/api/patent/parse', async (req, reply) => {
     const data = await req.file();
     if (!data) return reply.status(400).send({ error: 'PDF 파일이 필요합니다' });
@@ -29,7 +28,13 @@ export async function patentRoutes(app: FastifyInstance) {
     for await (const chunk of data.file) chunks.push(chunk);
     const buffer = Buffer.concat(chunks);
 
-    const pdfText = await extractTextFromPdf(buffer);
+    let pdfText: string;
+    try {
+      pdfText = await extractTextFromPdf(buffer);
+    } catch (e) {
+      return reply.status(422).send({ error: `PDF를 읽을 수 없습니다: ${String(e)}` });
+    }
+
     const claimTexts = extractClaimsFromText(pdfText);
 
     if (claimTexts.length === 0) {
@@ -39,12 +44,10 @@ export async function patentRoutes(app: FastifyInstance) {
     }
 
     const result = buildClaimTrees(claimTexts);
-    // pdfText를 함께 반환 (프론트에서 채팅 컨텍스트로 보관)
     return reply.send({ ...result, pdfText });
   });
 
   // ── 텍스트 직접 입력 파싱 ─────────────────────────────────────
-  // 청구항을 직접 입력할 때 사용. 보조 참고 자료(PDF 또는 URL)를 선택적으로 첨부 가능.
   app.post('/api/patent/parse-text', async (req, reply) => {
     let claimText = '';
     let contextUrl = '';
@@ -86,7 +89,6 @@ export async function patentRoutes(app: FastifyInstance) {
       }
     }
 
-    // 청구항 파싱 — 헤더가 있으면 다중 항 파싱, 없으면 전체를 1항으로 처리
     const claimTexts = extractClaimsFromText(claimText);
     const result = buildClaimTrees(
       claimTexts.length > 0 ? claimTexts : [{ number: 1, text: claimText.trim() }]
@@ -111,16 +113,15 @@ export async function patentRoutes(app: FastifyInstance) {
   );
 
   // ── 선행발명 검색 — 멀티턴 SSE ───────────────────────────────
-  // 매 요청마다 전체 대화 이력 + pdfText를 받아 단일 프롬프트로 조합
   app.post<{
     Body: {
       claimNumber: number;
       parts: ClaimPart[];
       llmType: string;
       pdfText?: string;
-      promptContent?: string;  // 사용자 선택 프롬프트
-      messages: ChatMessage[]; // 전체 대화 이력 (마지막이 현재 사용자 메시지)
-      contextText?: string;    // 직접 입력 시 참고 자료 텍스트 (PDF 또는 URL)
+      promptContent?: string;
+      messages: ChatMessage[];
+      contextText?: string;
       contextSource?: 'pdf' | 'url';
     };
   }>('/api/patent/search', async (req, reply) => {
@@ -133,15 +134,11 @@ export async function patentRoutes(app: FastifyInstance) {
     });
     const send = (data: object) => reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
 
-    // 청구항 구조 텍스트
     const claimStructure = formatClaimStructure(parts, claimNumber);
 
-    // 첫 번째 사용자 메시지(검색 시작)는 지시문으로 교체
-    // — 화면에는 "검색 시작" 표시지만 LLM에는 실제 지시문 전달
     const resolvedMessages = messages.map((m, i) => {
       if (i === 0 && m.role === 'user') {
-        // 사용자 커스텀 프롬프트 or 기본 지시문
-        let content = promptContent
+        const content = promptContent
           ? (promptContent.includes('{{claim}}')
               ? promptContent.replace(/\{\{claim\}\}/g, claimStructure)
               : `${promptContent}\n\n${claimStructure}`)

@@ -44,19 +44,38 @@ function extractPreamble(text: string): { preamble: string | null; rest: string 
 
 // 어미(tail) 추출: "[를] 포함하는 [명사]." 또는 "[를] 특징으로 하는 [명사]."
 // 탐욕적 매칭으로 마지막 전이구+명사 패턴을 찾음
+const TRANSITION_RE = /^(?:[를을이가]?\s*)?(?:포함하[는며]|특징으로\s*하[는며]|이루어[지진]는|구성되[는는]|로\s*구성되[는는]|수행하[는는])/;
+
 function extractTail(text: string): { tail: string | null; body: string } {
+  const trimmed = text.trim();
+
+  // 1. 청크 자체가 전이구로 시작하면 전체가 어미 (예: "을 포함하는 블럭식 학습교구.")
+  if (TRANSITION_RE.test(trimmed)) {
+    return { body: '', tail: trimmed };
+  }
+
+  // 2. 본문 뒤에 어미가 붙은 경우 — 도메인 특화 명사까지 허용
   const TAIL_NOUNS = '장치|방법|시스템|프로그램|매체|기기|서버|단말|모듈|컴퓨터|기록\\s*매체|저장\\s*매체|회로|장비|기술|구조|수단|유닛|디바이스';
-  // 탐욕적 첫 그룹 → 마지막 전이구 패턴을 찾아냄
-  const tailRegex = new RegExp(
+  const tailRegexStrict = new RegExp(
     `^([\\s\\S]*)\\s*([를을이가]?\\s*(?:포함하[는며]|특징으로\\s*하[는며]|이루어[지진]는|구성되[는는]|로\\s*구성되[는는]|수행하[는는])\\s*[가-힣\\s]*(?:${TAIL_NOUNS})[가-힣]*[.!?]?)\\s*$`
   );
-  const match = text.match(tailRegex);
-  if (match && match[2] && match[2].trim().length > 2) {
-    return {
-      body: match[1].trim(),
-      tail: match[2].trim(),
-    };
+  const strictMatch = trimmed.match(tailRegexStrict);
+  if (strictMatch && strictMatch[2] && strictMatch[2].trim().length > 2) {
+    return { body: strictMatch[1].trim(), tail: strictMatch[2].trim() };
   }
+
+  // 3. 목록에 없는 명사(예: "블럭식 학습교구", "조립체")도 어미로 인식
+  const tailRegexGeneral = new RegExp(
+    `^([\\s\\S]*)\\s*([를을이가]?\\s*(?:포함하[는며]|특징으로\\s*하[는며]|이루어[지진]는|구성되[는는]|로\\s*구성되[는는]|수행하[는는])\\s*[가-힣a-zA-Z0-9\\s()·-]+[.!?]?)\\s*$`
+  );
+  const generalMatch = trimmed.match(tailRegexGeneral);
+  if (generalMatch && generalMatch[2]) {
+    const potentialTail = generalMatch[2].trim();
+    if (potentialTail.length > 2 && potentialTail.length < 100 && !potentialTail.includes(';')) {
+      return { body: generalMatch[1].trim(), tail: potentialTail };
+    }
+  }
+
   return { body: text, tail: null };
 }
 
@@ -133,22 +152,23 @@ function parseIndependent(number: number, rawText: string): ParsedIndependentCla
   return { number, type: 'independent', rawText, parts, needsLLM };
 }
 
-// 종속항 인용 번호 추출
+// 종속항 인용 번호 추출 — "제N항" 및 "청구항 N" 형식 모두 지원
 function extractRefNumbers(text: string): number[] {
   const nums: number[] = [];
-  const re = /제\s*(\d+)\s*항/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    nums.push(parseInt(m[1], 10));
-  }
+  const re1 = /제\s*(\d+)\s*항/g;
+  while ((m = re1.exec(text)) !== null) nums.push(parseInt(m[1], 10));
+  const re2 = /청구항\s*(\d+)/g;
+  while ((m = re2.exec(text)) !== null) nums.push(parseInt(m[1], 10));
   return [...new Set(nums)];
 }
 
 function parseClaims(claimTexts: { number: number; text: string }[]): ParsedClaim[] {
   return claimTexts.map(({ number, text }) => {
-    // 종속항 판별: 타 항을 "에 있어서"로 인용
+    // 종속항 판별 — "제N항에 있어서" 및 "청구항 N에 있어서" 형식 모두 지원
     const isDependent =
       /제\s*\d+\s*항(?:\s*내지\s*제\s*\d+\s*항)?(?:\s*또는\s*제\s*\d+\s*항)?(?:\s*중\s*어느\s*한\s*항)?\s*에\s*있어서/.test(text) ||
+      /청구항\s*\d+[^.]*에\s*있어서/.test(text) ||
       /제\s*\d+\s*항을?\s*인용/.test(text);
 
     if (isDependent) {
@@ -197,13 +217,15 @@ export function extractClaimsFromText(pdfText: string): { number: number; text: 
   const sectionMatch = pdfText.match(sectionRegex);
   const claimsSection = sectionMatch ? sectionMatch[1] : pdfText;
 
-  // 청구항 헤더와 그 위치를 모두 수집
-  // 패턴: "청구항 1", "청구항 제1항", "[청구항 1]", "제1항." 등
-  const headerRegex = /(?:\[?청구항\s*제?\s*(\d+)\s*항?\]?|제\s*(\d+)\s*항\s*[.\n:])/g;
+  // 청구항 헤더 패턴
+  // "청구항 N" / "[청구항 N]" 뒤에 반드시 공백·개행만 있어야 진짜 헤더로 인정
+  // → "청구항 1에 있어서," 같은 종속항 참조를 헤더로 오인하지 않음
+  // "제N항." / "제N항:" 형식도 지원
+  const HEADER_RE = /(?:\[?청구항\s*제?\s*(\d+)\s*항?\]?[ \t]*(?:\n|$)|제\s*(\d+)\s*항[ \t]*[.:][ \t]*(?:\n|$))/gm;
 
   const headers: { number: number; headerEnd: number }[] = [];
   let m: RegExpExecArray | null;
-  while ((m = headerRegex.exec(claimsSection)) !== null) {
+  while ((m = HEADER_RE.exec(claimsSection)) !== null) {
     const num = parseInt(m[1] ?? m[2], 10);
     if (!isNaN(num)) {
       headers.push({ number: num, headerEnd: m.index + m[0].length });
@@ -212,13 +234,10 @@ export function extractClaimsFromText(pdfText: string): { number: number; text: 
 
   if (headers.length === 0) return [];
 
-  // 각 청구항의 텍스트: 현재 헤더 끝 ~ 다음 헤더 시작
-  const headerStarts = headers.map(h => h.headerEnd);
-
-  // 다음 헤더의 시작 위치를 역으로 구함 (헤더 시작 = 헤더 끝 - 매치 길이)
-  const headerRegex2 = /(?:\[?청구항\s*제?\s*(\d+)\s*항?\]?|제\s*(\d+)\s*항\s*[.\n:])/g;
+  // 다음 헤더의 시작 위치 — 현재 청구항 텍스트의 끝으로 사용
+  const HEADER_RE2 = /(?:\[?청구항\s*제?\s*(\d+)\s*항?\]?[ \t]*(?:\n|$)|제\s*(\d+)\s*항[ \t]*[.:][ \t]*(?:\n|$))/gm;
   const headerRanges: { start: number; end: number }[] = [];
-  while ((m = headerRegex2.exec(claimsSection)) !== null) {
+  while ((m = HEADER_RE2.exec(claimsSection)) !== null) {
     headerRanges.push({ start: m.index, end: m.index + m[0].length });
   }
 
@@ -235,6 +254,10 @@ function normalizeClaimText(text: string): string {
   return text
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
+    // 한국어 조사/어미로 시작하는 줄은 앞 줄과 붙여쓰기 (공백 없이)
+    .replace(/([가-힣])\n((?:의|에서?|에게|으로|로|이(?=[가-힣,)\s])|가(?=[가-힣,)\s])|은|는|을|를|와|과|도|만|부터|까지|아|어|여|며))/g, '$1$2')
+    // 나머지 한국어-한국어 줄바꿈은 공백으로 대체
+    .replace(/([가-힣])\n([가-힣])/g, '$1 $2')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t]+/g, ' ')
     .trim();

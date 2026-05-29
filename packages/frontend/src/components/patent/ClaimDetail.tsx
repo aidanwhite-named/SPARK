@@ -26,31 +26,21 @@ export function ClaimDetail() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  if (!selectedTree) {
-    return (
-      <div className="flex items-center justify-center h-full text-sm text-gray-400">
-        좌측에서 독립항을 선택하세요
-      </div>
-    );
-  }
-
-  const { root } = selectedTree;
-  const claimNumber = root.number;
+  // ── 선택된 항 관련 값 (null-safe) ──────────────────────────
+  const claimNumber = selectedTree?.root.number ?? 0;
   const messages = chatHistories[claimNumber] ?? [];
   const isStreaming = streamingClaimNumber === claimNumber;
   const selectedPrompt = prompts.find(p => p.id === searchPromptId) ?? null;
 
-  // 새 메시지 추가될 때 자동 스크롤
+  // ── 훅은 조건부 리턴 이전에 모두 선언 ──────────────────────
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length, isStreaming]);
 
-  // 청구항 변경 시 입력 초기화
   useEffect(() => {
     setInput('');
   }, [claimNumber]);
 
-  // LLM에 전송할 대화 이력 (isStreaming 플레이스홀더 제외)
   const getHistoryForSend = useCallback(
     (withNewUserMsg?: string) => {
       const base = messages
@@ -65,6 +55,7 @@ export function ClaimDetail() {
   const streamSearch = useCallback(async (
     historyForSend: { role: 'user' | 'assistant'; content: string }[]
   ) => {
+    if (!selectedTree) return;
     startStreaming(claimNumber);
 
     try {
@@ -73,7 +64,7 @@ export function ClaimDetail() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           claimNumber,
-          parts: root.parts,
+          parts: selectedTree.root.parts,
           llmType: selectedLLM ?? 'claude',
           pdfText: pdfText ?? '',
           promptContent: selectedPrompt?.content,
@@ -112,31 +103,28 @@ export function ClaimDetail() {
       setError(String(e));
       finalizeStreaming(claimNumber);
     }
-  }, [claimNumber, root.parts, selectedLLM, pdfText, contextText, contextSource, selectedPrompt,
+  }, [selectedTree, claimNumber, selectedLLM, pdfText, contextText, contextSource, selectedPrompt,
       startStreaming, appendStreamChunk, finalizeStreaming, setError]);
 
-  // 검색 시작 (첫 번째 메시지)
   const handleSearchStart = useCallback(async () => {
-    if (isStreaming) return;
+    if (isStreaming || !selectedTree) return;
     clearChat(claimNumber);
 
     const displayLabel = selectedPrompt
       ? `선행발명 검색 시작 — ${selectedPrompt.name}`
       : '선행발명 검색 시작 (기본 프롬프트)';
 
-    // 화면에는 레이블만, LLM에는 실제 지시문이 백엔드에서 주입됨
     const userMsg: PatentChatMessage = {
       id: crypto.randomUUID(),
       role: 'user',
-      content: '__SEARCH_START__',  // 백엔드에서 실제 지시문으로 교체됨
+      content: '__SEARCH_START__',
       displayLabel,
     };
     addMessage(claimNumber, userMsg);
 
     await streamSearch([{ role: 'user', content: '__SEARCH_START__' }]);
-  }, [isStreaming, clearChat, claimNumber, selectedPrompt, addMessage, streamSearch]);
+  }, [isStreaming, selectedTree, clearChat, claimNumber, selectedPrompt, addMessage, streamSearch]);
 
-  // 사용자 메시지 전송 (후속 대화)
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text || isStreaming) return;
@@ -153,21 +141,15 @@ export function ClaimDetail() {
     await streamSearch(history);
   }, [input, isStreaming, addMessage, claimNumber, getHistoryForSend, streamSearch]);
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
-
-  const handleLLMAnalyze = async () => {
+  const handleLLMAnalyze = useCallback(async () => {
+    if (!selectedTree) return;
     setAnalyzing(true);
     setError(null);
     try {
       const res = await fetch('/api/patent/analyze-claim', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ claimNumber, rawText: root.rawText }),
+        body: JSON.stringify({ claimNumber, rawText: selectedTree.root.rawText }),
       });
       if (!res.ok) throw new Error(await res.text());
       const { parts } = await res.json();
@@ -177,7 +159,25 @@ export function ClaimDetail() {
     } finally {
       setAnalyzing(false);
     }
+  }, [selectedTree, claimNumber, setAnalyzing, setError, updateClaimParts]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
   };
+
+  // ── 독립항 미선택 시 안내 ────────────────────────────────────
+  if (!selectedTree) {
+    return (
+      <div className="flex items-center justify-center h-full text-sm text-gray-400">
+        좌측에서 독립항을 선택하세요
+      </div>
+    );
+  }
+
+  const { root } = selectedTree;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -321,12 +321,10 @@ function ChatBubble({ message }: { message: PatentChatMessage }) {
           : 'bg-gray-100 text-gray-800 rounded-tl-sm'
       )}>
         {isUser ? (
-          /* 사용자 메시지: displayLabel 우선 표시 */
           <p className="leading-relaxed whitespace-pre-wrap">
             {message.displayLabel ?? message.content}
           </p>
         ) : (
-          /* AI 메시지: 마크다운 렌더링 */
           <div className={cn(
             'prose prose-sm max-w-none',
             'prose-headings:text-gray-800 prose-p:text-gray-800',
