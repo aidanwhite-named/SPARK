@@ -18,7 +18,7 @@ export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
       selectedLLM: 'claude',
-      selectedModel: undefined,
+      selectedModel: 'claude-haiku-4-5-20251001',
       llmInfos: [],
       theme: 'dark',
 

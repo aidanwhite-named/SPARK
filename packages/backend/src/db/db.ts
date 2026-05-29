@@ -15,6 +15,15 @@ export const db = drizzle(client, { schema });
 // ── 테이블 초기화 ─────────────────────────────────────────────
 export async function initializeDB() {
   await client.executeMultiple(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      password TEXT NOT NULL,
+      name TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS prompts (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,

@@ -4,6 +4,8 @@ export interface RunOptions {
   timeout?: number;        // ms
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  stdinData?: string;      // 프로세스의 stdin으로 전달할 데이터
+  shell?: boolean;         // shell 모드 강제 지정 (기본: Windows=true, 그외=false)
 }
 
 export interface RunResult {
@@ -24,17 +26,25 @@ export class CLIExecutor {
     args: string[],
     options: RunOptions = {}
   ): Promise<RunResult> {
-    const { timeout = 120_000, cwd = process.cwd(), env = process.env } = options;
+    const { timeout = 120_000, cwd = process.cwd(), env = process.env, stdinData, shell } = options;
+    const useShell = shell ?? process.platform === 'win32';
 
     return new Promise((resolve, reject) => {
       const spawnOpts: SpawnOptions = {
         cwd,
         env,
-        // Windows에서는 shell: true 필요
-        shell: process.platform === 'win32',
+        shell: useShell,
+        stdio: ['pipe', 'pipe', 'pipe'],
       };
 
       const child = spawn(command, args, spawnOpts);
+
+      if (stdinData && child.stdin) {
+        child.stdin.write(stdinData, 'utf8');
+        child.stdin.end();
+      } else if (child.stdin) {
+        child.stdin.end();
+      }
 
       let stdout = '';
       let stderr = '';
@@ -76,16 +86,27 @@ export class CLIExecutor {
     onLine: (line: string) => void,
     options: RunOptions = {}
   ): Promise<void> {
-    const { timeout = 300_000, cwd = process.cwd(), env = process.env } = options;
+    const { timeout = 300_000, cwd = process.cwd(), env = process.env, stdinData, shell } = options;
+    // Windows에서 .cmd 파일 실행을 위해 shell 필요. stdinData가 있어도 shell 유지.
+    const useShell = shell ?? process.platform === 'win32';
 
     return new Promise((resolve, reject) => {
       const spawnOpts: SpawnOptions = {
         cwd,
         env,
-        shell: process.platform === 'win32',
+        shell: useShell,
+        stdio: ['pipe', 'pipe', 'pipe'], // 항상 pipe로 통일 (stdin 제어 위해)
       };
 
       const child = spawn(command, args, spawnOpts);
+
+      // stdin으로 프롬프트 전달 후 닫기
+      if (stdinData && child.stdin) {
+        child.stdin.write(stdinData, 'utf8');
+        child.stdin.end();
+      } else if (child.stdin) {
+        child.stdin.end(); // stdin이 없으면 즉시 닫아야 프로세스가 대기하지 않음
+      }
 
       let buffer = '';
 

@@ -63,6 +63,23 @@ export async function sendMessage(params: {
     const reader = res.body.getReader();
     const dec = new TextDecoder();
     let buf = '';
+    let finalized = false;
+
+    const processLine = (line: string) => {
+      if (!line.startsWith('data: ')) return;
+      try {
+        const evt = JSON.parse(line.slice(6)) as SSEEvent;
+        if (evt.type === 'chunk' && evt.content) {
+          appendStreaming(evt.content);
+        } else if (evt.type === 'done') {
+          finalizeStreaming((evt as any).messageId ?? crypto.randomUUID());
+          finalized = true;
+        } else if (evt.type === 'error') {
+          setStreaming(false);
+          finalized = true;
+        }
+      } catch { /* skip */ }
+    };
 
     while (true) {
       const { done, value } = await reader.read();
@@ -70,15 +87,17 @@ export async function sendMessage(params: {
       buf += dec.decode(value, { stream: true });
       const lines = buf.split('\n');
       buf = lines.pop() ?? '';
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        try {
-          const evt = JSON.parse(line.slice(6)) as SSEEvent;
-          if (evt.type === 'chunk' && evt.content) appendStreaming(evt.content);
-          else if (evt.type === 'done') finalizeStreaming((evt as any).messageId ?? crypto.randomUUID());
-          else if (evt.type === 'error') { setStreaming(false); break; }
-        } catch { /* skip */ }
-      }
+      for (const line of lines) processLine(line);
+    }
+
+    // 스트림이 끝났을 때 buf에 남아있는 마지막 조각 처리
+    if (buf.trim()) {
+      for (const line of buf.split('\n')) processLine(line);
+    }
+
+    // done 이벤트 없이 스트림이 종료된 경우 안전망
+    if (!finalized) {
+      finalizeStreaming(crypto.randomUUID());
     }
   } catch (err) {
     setStreaming(false);

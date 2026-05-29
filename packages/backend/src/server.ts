@@ -2,12 +2,19 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { chatRoutes } from './routes/chat.routes.js';
 import { promptRoutes } from './routes/prompt.routes.js';
+import { patentRoutes } from './routes/patent.routes.js';
+import { initializeDB } from './db/db.js';
 
 const app = Fastify({ logger: false });
 
+// ── DB 초기화 ─────────────────────────────────────────────
+await initializeDB();
+
 await app.register(cors, { origin: true });
+
 await app.register(chatRoutes);
 await app.register(promptRoutes);
+await app.register(patentRoutes);
 
 app.get('/health', async () => ({ status: 'ok' }));
 
