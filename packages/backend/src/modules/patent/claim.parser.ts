@@ -275,13 +275,22 @@ export function extractClaimsFromText(pdfText: string): { number: number; text: 
 }
 
 function normalizeClaimText(text: string): string {
+  // NULL 문자(\x00)를 구성 경계 보호용 임시 마커로 사용 (특허 텍스트에는 존재하지 않음)
+  const BOUNDARY = '\x00';
+
   return text
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
-    // 한국어 조사/어미로 시작하는 줄은 앞 줄과 붙여쓰기 (공백 없이)
+    // ① 쉼표(또는 ", 및" / ", 또는" 등)로 끝나는 줄 뒤의 줄바꿈 → 구성 경계 보호
+    //    예) "획득하는 단계,\n상기"  → 경계 보존
+    //        "단계, 및\n상기"        → 경계 보존
+    .replace(/(,[^\n]*)\n([가-힣])/g, `$1${BOUNDARY}$2`)
+    // ② 조사/어미로 시작하는 줄은 앞 줄과 공백 없이 붙임 (PDF 행 분리)
     .replace(/([가-힣])\n((?:의|에서?|에게|으로|로|이(?=[가-힣,)\s])|가(?=[가-힣,)\s])|은|는|을|를|와|과|도|만|부터|까지|아|어|여|며))/g, '$1$2')
-    // 나머지 한국어-한국어 줄바꿈은 공백으로 대체
+    // ③ 나머지 한국어-한국어 줄바꿈은 PDF 행 분리 → 공백으로 대체
     .replace(/([가-힣])\n([가-힣])/g, '$1 $2')
+    // ④ 구성 경계 복원
+    .replace(new RegExp(BOUNDARY, 'g'), '\n')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t]+/g, ' ')
     .trim();
