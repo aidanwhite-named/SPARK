@@ -30,8 +30,27 @@ function isSimple(text: string): boolean {
   return false;
 }
 
-// 어두(preamble) 추출: "~에 있어서," 또는 "~에 관한 [장치/방법]에 있어서,"
+// 어두(preamble) 추출
+// 지원 패턴:
+//   1. 첫 줄이 "~으로서," / "~로서," 로 끝나는 경우
+//      예) "로봇을 이용하여 배송을 지원하기 위한 방법으로서,"
+//          "데이터를 처리하기 위한 시스템으로서,"
+//   2. "~에 있어서" (종속항 스타일 독립항, 기존 패턴 유지)
+//   3. "~에 관한 [장치/방법/시스템/것]" (기존 패턴 유지)
 function extractPreamble(text: string): { preamble: string | null; rest: string } {
+  // 1. 첫 줄 단독으로 어두 여부 판정 — 줄이 "~으로서" / "~로서" + 쉼표로 끝나는 경우
+  const firstLineEnd = text.indexOf('\n');
+  if (firstLineEnd > 0) {
+    const firstLine = text.slice(0, firstLineEnd).trim();
+    if (/[가-힣](?:으로서|로서)[,\s]*$/.test(firstLine)) {
+      return {
+        preamble: firstLine,
+        rest: text.slice(firstLineEnd + 1).trim(),
+      };
+    }
+  }
+
+  // 2. 기존 패턴: "~에 있어서" / "~에 관한 장치·방법·시스템"
   const match = text.match(/^([\s\S]*?(?:에\s*있어서|에\s*관한\s*(?:장치|방법|시스템|것))[\s,.:]*)/);
   if (match) {
     return {
@@ -39,6 +58,7 @@ function extractPreamble(text: string): { preamble: string | null; rest: string 
       rest: text.slice(match[0].length).trim(),
     };
   }
+
   return { preamble: null, rest: text };
 }
 
@@ -84,8 +104,11 @@ function buildComponents(chunks: string[]): ClaimPart[] {
   const parts: ClaimPart[] = [];
   let labelIdx = 0;
   for (const chunk of chunks) {
-    // "및", "또는", 선행 쉼표 제거
-    const clean = chunk.replace(/^(?:및|또는|,)\s*/, '').trim();
+    // 선행/후행 "및", "또는", 쉼표 제거
+    const clean = chunk
+      .replace(/^(?:및|또는|,)\s*/, '')
+      .replace(/[,\s]+(?:및|또는)\s*$/, '')
+      .trim();
     if (!clean) continue;
     const simple = isSimple(clean);
     parts.push({
@@ -213,7 +236,8 @@ export function buildClaimTrees(claimTexts: { number: number; text: string }[]):
 // PDF 텍스트에서 청구항 섹션 추출 및 개별 청구항 분리
 export function extractClaimsFromText(pdfText: string): { number: number; text: string }[] {
   // 청구범위 섹션 찾기
-  const sectionRegex = /(?:【?\s*청구범위\s*】?|【?\s*특허청구범위\s*】?)([\s\S]*?)(?=【|발명의\s*설명|요약|도면|$)/;
+  // "청구범위" / "특허청구범위" / "특허청구의 범위" (구형 등록특허) 모두 처리
+  const sectionRegex = /(?:【?\s*(?:특허\s*)?청구(?:의\s*)?범위\s*】?|【?\s*특허청구범위\s*】?)([\s\S]*?)(?=【|명\s*세\s*서|발명의\s*(?:상세한\s*)?설명|요약|도면의?\s*간단한\s*설명|도면|$)/;
   const sectionMatch = pdfText.match(sectionRegex);
   const claimsSection = sectionMatch ? sectionMatch[1] : pdfText;
 
@@ -247,7 +271,7 @@ export function extractClaimsFromText(pdfText: string): { number: number; text: 
     const textEnd = i + 1 < headerRanges.length ? headerRanges[i + 1].start : claimsSection.length;
     const rawText = claimsSection.slice(textStart, textEnd).trim();
     return { number: h.number, text: normalizeClaimText(rawText) };
-  }).filter(c => c.text.length > 0);
+  }).filter(c => c.text.length > 0 && !/^삭제\s*$/.test(c.text));
 }
 
 function normalizeClaimText(text: string): string {
