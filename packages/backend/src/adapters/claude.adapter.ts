@@ -59,6 +59,8 @@ export class ClaudeAdapter extends BaseLLMAdapter {
       '--verbose',
       '--output-format', 'stream-json',
       '--include-partial-messages',
+      '--allowedTools', 'WebSearch,WebFetch,Bash',
+      '--dangerously-skip-permissions',
     ];
     if (request.model) {
       args.push('--model', request.model);

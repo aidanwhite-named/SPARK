@@ -90,7 +90,7 @@ function PdfUploadPanel({ setResult, setUploading, setError, isUploading }: Pane
         throw new Error(err.error ?? '파싱 실패');
       }
       const data: PatentParseResult & { pdfText?: string } = await res.json();
-      setResult(data, data.pdfText ?? '');
+      setResult(data, data.pdfText ?? '', undefined, undefined, data.priorityDate, data.priorityDateLabel);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -166,7 +166,7 @@ function TextInputPanel({ setResult, setUploading, setError, isUploading }: Pane
         throw new Error(err.error ?? '분석 실패');
       }
       const data: PatentParseResult & { contextText?: string; contextSource?: 'pdf' | 'url' } = await res.json();
-      setResult(data, data.pdfText ?? '', data.contextText, data.contextSource);
+      setResult(data, data.pdfText ?? '', data.contextText, data.contextSource, data.priorityDate, data.priorityDateLabel);
     } catch (e) {
       setError(String(e));
     } finally {

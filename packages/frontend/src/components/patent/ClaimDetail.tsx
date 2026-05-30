@@ -13,7 +13,9 @@ import { cn } from '../../lib/utils';
 
 export function ClaimDetail() {
   const {
-    selectedTree, pdfText, contextText, contextSource, searchPromptId, setSearchPromptId,
+    selectedTree, selectedDependent,
+    pdfText, contextText, contextSource, priorityDate, priorityDateLabel,
+    searchPromptId, setSearchPromptId,
     isAnalyzing, streamingClaimNumber,
     setAnalyzing, setError,
     addMessage, startStreaming, appendStreamChunk, finalizeStreaming,
@@ -71,6 +73,8 @@ export function ClaimDetail() {
           messages: historyForSend,
           contextText: contextText ?? undefined,
           contextSource: contextSource ?? undefined,
+          priorityDate: priorityDate ?? undefined,
+          priorityDateLabel: priorityDateLabel ?? undefined,
         }),
       });
 
@@ -183,9 +187,16 @@ export function ClaimDetail() {
     <div className="flex flex-col h-full overflow-hidden">
       {/* ── 헤더 ─────────────────────────────────────────────── */}
       <div className="px-4 py-2.5 border-b border-gray-200 bg-gray-50 flex items-center gap-2 shrink-0 flex-wrap">
-        <span className="text-xs font-semibold text-violet-700 bg-violet-100 px-2 py-0.5 rounded mr-auto">
-          제{claimNumber}항 독립항
-        </span>
+        <div className="flex items-center gap-1.5 mr-auto">
+          <span className="text-xs font-semibold text-violet-700 bg-violet-100 px-2 py-0.5 rounded">
+            제{claimNumber}항 독립항
+          </span>
+          {selectedDependent && (
+            <span className="text-xs font-semibold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded">
+              › 제{selectedDependent.number}항 종속항
+            </span>
+          )}
+        </div>
 
         {root.needsLLM && (
           <button
@@ -245,6 +256,23 @@ export function ClaimDetail() {
           </div>
         )}
       </div>
+
+      {/* ── 종속항 원문 ──────────────────────────────────────── */}
+      {selectedDependent && (
+        <div className="shrink-0 border-b border-gray-100 px-4 py-3 bg-indigo-50/40">
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className="text-xs font-semibold text-indigo-600">
+              제{selectedDependent.number}항 종속항
+            </span>
+            <span className="text-xs text-gray-400">
+              (제{selectedDependent.refersTo.join('·')}항 인용)
+            </span>
+          </div>
+          <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">
+            {selectedDependent.rawText}
+          </p>
+        </div>
+      )}
 
       {/* ── 채팅 메시지 영역 ─────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">

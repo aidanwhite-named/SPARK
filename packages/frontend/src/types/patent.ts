@@ -30,6 +30,8 @@ export interface PatentParseResult {
   totalClaims: number;
   trees: ClaimTree[];
   pdfText?: string;  // 전체 특허 원문 (채팅 컨텍스트용)
+  priorityDate?: string;       // YYYY-MM-DD
+  priorityDateLabel?: string;  // 화면 표시용 레이블
 }
 
 export interface PatentChatMessage {

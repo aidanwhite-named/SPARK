@@ -2,6 +2,8 @@ import { FastifyInstance } from 'fastify';
 import multipart from '@fastify/multipart';
 import { extractTextFromPdf } from '../modules/patent/pdf.extractor.js';
 import { buildClaimTrees, extractClaimsFromText } from '../modules/patent/claim.parser.js';
+import { extractPatentDate } from '../modules/patent/date.extractor.js';
+import { validateClaims } from '../modules/patent/claim.validator.js';
 import { analyzeClaimWithLLM, buildMultiTurnPrompt, formatClaimStructure, SEARCH_INSTRUCTIONS } from '../modules/patent/llm.analyzer.js';
 import { compareClaims } from '../modules/patent/claim.comparator.js';
 import { fetchUrlContent } from '../modules/patent/url.fetcher.js';
@@ -43,8 +45,16 @@ export async function patentRoutes(app: FastifyInstance) {
       });
     }
 
+    const validation = validateClaims(claimTexts, pdfText);
     const result = buildClaimTrees(claimTexts);
-    return reply.send({ ...result, pdfText });
+    const patentDate = extractPatentDate(pdfText);
+    return reply.send({
+      ...result,
+      pdfText,
+      validation,
+      priorityDate: patentDate?.date,
+      priorityDateLabel: patentDate?.label,
+    });
   });
 
   // ── 텍스트 직접 입력 파싱 ─────────────────────────────────────
@@ -123,16 +133,32 @@ export async function patentRoutes(app: FastifyInstance) {
       messages: ChatMessage[];
       contextText?: string;
       contextSource?: 'pdf' | 'url';
+      priorityDate?: string;
+      priorityDateLabel?: string;
     };
   }>('/api/patent/search', async (req, reply) => {
-    const { claimNumber, parts, llmType, pdfText, promptContent, messages, contextText, contextSource } = req.body;
+    const { claimNumber, parts, llmType, pdfText, promptContent, messages, contextText, contextSource, priorityDate, priorityDateLabel } = req.body;
 
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
     });
-    const send = (data: object) => reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
+
+    // 클라이언트가 연결을 끊어도 서버가 죽지 않도록 소켓 에러를 조용히 처리
+    reply.raw.on('error', () => { /* ignore EPIPE / write-after-close */ });
+
+    let closed = false;
+    reply.raw.on('close', () => { closed = true; });
+
+    const send = (data: object) => {
+      if (closed || reply.raw.destroyed) return;
+      try {
+        reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
+      } catch {
+        closed = true;
+      }
+    };
 
     const claimStructure = formatClaimStructure(parts, claimNumber);
 
@@ -152,7 +178,7 @@ export async function patentRoutes(app: FastifyInstance) {
       pdfText ?? '',
       claimStructure,
       resolvedMessages,
-      { contextText, contextSource }
+      { contextText, contextSource, priorityDate, priorityDateLabel }
     );
     const adapter = adapterFactory.get((llmType as LLMType) ?? 'claude');
 

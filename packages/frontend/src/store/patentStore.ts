@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import {
   ClaimTree,
   CompareResult,
+  ParsedDependentClaim,
   ParsedIndependentClaim,
   PatentChatMessage,
   PatentParseResult,
@@ -13,7 +14,10 @@ interface PatentState {
   // 직접 입력 시 참고 자료 (PDF 또는 URL에서 추출한 텍스트)
   contextText: string | null;
   contextSource: 'pdf' | 'url' | null;
+  priorityDate: string | null;       // YYYY-MM-DD
+  priorityDateLabel: string | null;  // 화면 표시용 레이블
   selectedTree: ClaimTree | null;
+  selectedDependent: ParsedDependentClaim | null;
   searchPromptId: string | null;
   compareResult: CompareResult | null;
   isComparing: boolean;
@@ -26,8 +30,9 @@ interface PatentState {
   // 스트리밍 중인 청구항 번호 (null이면 미스트리밍)
   streamingClaimNumber: number | null;
 
-  setResult: (r: PatentParseResult, pdfText: string, contextText?: string, contextSource?: 'pdf' | 'url') => void;
+  setResult: (r: PatentParseResult, pdfText: string, contextText?: string, contextSource?: 'pdf' | 'url', priorityDate?: string, priorityDateLabel?: string) => void;
   selectTree: (tree: ClaimTree | null) => void;
+  selectDependent: (dep: ParsedDependentClaim | null) => void;
   setSearchPromptId: (id: string | null) => void;
   setCompareResult: (r: CompareResult | null) => void;
   setComparing: (v: boolean) => void;
@@ -50,7 +55,10 @@ export const usePatentStore = create<PatentState>((set, get) => ({
   pdfText: null,
   contextText: null,
   contextSource: null,
+  priorityDate: null,
+  priorityDateLabel: null,
   selectedTree: null,
+  selectedDependent: null,
   searchPromptId: null,
   compareResult: null,
   isComparing: false,
@@ -60,15 +68,18 @@ export const usePatentStore = create<PatentState>((set, get) => ({
   chatHistories: {},
   streamingClaimNumber: null,
 
-  setResult: (result, pdfText, contextText, contextSource) =>
+  setResult: (result, pdfText, contextText, contextSource, priorityDate, priorityDateLabel) =>
     set({
       result, pdfText,
       contextText: contextText ?? null,
       contextSource: contextSource ?? null,
-      selectedTree: null, compareResult: null, chatHistories: {}, error: null,
+      priorityDate: priorityDate ?? null,
+      priorityDateLabel: priorityDateLabel ?? null,
+      selectedTree: null, selectedDependent: null, compareResult: null, chatHistories: {}, error: null,
     }),
 
-  selectTree: (selectedTree) => set({ selectedTree }),
+  selectTree: (selectedTree) => set({ selectedTree, selectedDependent: null }),
+  selectDependent: (selectedDependent) => set({ selectedDependent }),
 
   setSearchPromptId: (searchPromptId) => set({ searchPromptId }),
   setCompareResult: (compareResult) => set({ compareResult }),
@@ -98,7 +109,10 @@ export const usePatentStore = create<PatentState>((set, get) => ({
     pdfText: null,
     contextText: null,
     contextSource: null,
+    priorityDate: null,
+    priorityDateLabel: null,
     selectedTree: null,
+    selectedDependent: null,
     searchPromptId: null,
     compareResult: null,
     isComparing: false,

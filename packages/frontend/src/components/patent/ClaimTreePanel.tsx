@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { ChevronRight, ChevronDown, GitBranch, Equal, Layers, AlertCircle } from 'lucide-react';
+import { ChevronRight, ChevronDown, GitBranch, Equal, Layers, AlertCircle, CalendarClock } from 'lucide-react';
 import { usePatentStore } from '../../store/patentStore';
-import { ClaimTree, CompareResult, EquivalenceGroup, DependentEquivalence, EquivType } from '../../types/patent';
+import { ClaimTree, CompareResult, EquivalenceGroup, DependentEquivalence, EquivType, ParsedDependentClaim } from '../../types/patent';
 import { cn } from '../../lib/utils';
 
 const GROUP_PALETTE: Record<number, { bg: string; border: string; text: string; dot: string }> = {
@@ -30,7 +30,7 @@ function findDepGroup(num: number, depEquivs: DependentEquivalence[]): Dependent
 }
 
 export function ClaimTreePanel() {
-  const { result, selectedTree, selectTree, compareResult } = usePatentStore();
+  const { result, selectedTree, selectTree, selectedDependent, selectDependent, compareResult, priorityDate, priorityDateLabel } = usePatentStore();
   if (!result) return null;
 
   const groups = compareResult?.equivalenceGroups ?? [];
@@ -47,6 +47,19 @@ export function ClaimTreePanel() {
         <p className="text-xs text-gray-400 mt-0.5">
           총 {result.totalClaims}항 · 독립항 {result.trees.length}개
         </p>
+
+        {priorityDate && (
+          <div className="mt-2 flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-blue-50 border border-blue-200">
+            <CalendarClock size={11} className="text-blue-500 shrink-0" />
+            <div className="min-w-0">
+              <span className="text-xs font-semibold text-blue-700">
+                {priorityDateLabel ?? '기준일'}
+              </span>
+              <span className="text-xs text-blue-600 ml-1.5">{priorityDate}</span>
+            </div>
+            <span className="text-[10px] text-blue-400 ml-auto shrink-0">선행발명 기준</span>
+          </div>
+        )}
 
         {groups.length > 0 && (
           <div className="mt-2 space-y-1">
@@ -75,7 +88,9 @@ export function ClaimTreePanel() {
             key={tree.root.number}
             tree={tree}
             isSelected={selectedTree?.root.number === tree.root.number}
+            selectedDepNumber={selectedDependent?.number ?? null}
             onSelect={selectTree}
+            onSelectDep={(dep) => { selectTree(tree); selectDependent(dep); }}
             groups={groups}
             depEquivs={depEquivs}
           />
@@ -86,11 +101,13 @@ export function ClaimTreePanel() {
 }
 
 function TreeNode({
-  tree, isSelected, onSelect, groups, depEquivs,
+  tree, isSelected, selectedDepNumber, onSelect, onSelectDep, groups, depEquivs,
 }: {
   tree: ClaimTree;
   isSelected: boolean;
+  selectedDepNumber: number | null;
   onSelect: (t: ClaimTree) => void;
+  onSelectDep: (dep: ParsedDependentClaim) => void;
   groups: EquivalenceGroup[];
   depEquivs: DependentEquivalence[];
 }) {
@@ -181,30 +198,40 @@ function TreeNode({
           {dependents.map(dep => {
             const depGroup = findDepGroup(dep.number, depEquivs);
             const depColor = depGroup ? (GROUP_PALETTE[depGroup.groupId] ?? GROUP_PALETTE[1]) : null;
+            const isDepSelected = selectedDepNumber === dep.number;
 
             return (
-              <div
+              <button
                 key={dep.number}
+                onClick={() => onSelectDep(dep)}
                 className={cn(
-                  'flex items-center gap-2 px-3 py-1.5 mx-1 rounded-sm',
-                  depColor ? depColor.bg : 'hover:bg-gray-50'
+                  'w-full flex items-center gap-2 px-3 py-1.5 mx-1 rounded-sm text-left transition-colors',
+                  isDepSelected
+                    ? 'bg-violet-100 border border-violet-300'
+                    : depColor ? depColor.bg : 'hover:bg-gray-50'
                 )}
               >
                 <div className="flex items-center gap-1 shrink-0">
                   {depColor && (
                     <span className={cn('w-1.5 h-1.5 rounded-full', depColor.dot)} />
                   )}
-                  <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
+                  <span className={cn(
+                    'text-xs px-1.5 py-0.5 rounded',
+                    isDepSelected ? 'bg-violet-200 text-violet-700 font-bold' : 'bg-gray-100 text-gray-500'
+                  )}>
                     {dep.number}
                   </span>
                 </div>
-                <p className="text-xs text-gray-400 truncate flex-1">
+                <p className={cn(
+                  'text-xs truncate flex-1',
+                  isDepSelected ? 'text-violet-600 font-medium' : 'text-gray-400'
+                )}>
                   ↳ 제{dep.refersTo.join('·')}항 인용
                 </p>
                 {depGroup && (
                   <span className={cn('text-xs font-medium shrink-0', depColor!.text)}>≡</span>
                 )}
-              </div>
+              </button>
             );
           })}
         </div>
