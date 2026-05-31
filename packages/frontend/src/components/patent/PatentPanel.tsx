@@ -1,6 +1,7 @@
 import React from 'react';
-import { RotateCcw, GitCompare, Loader2, FileSearch } from 'lucide-react';
+import { RotateCcw, GitCompare, Loader2, FileSearch, Zap, Settings } from 'lucide-react';
 import { usePatentStore } from '../../store/patentStore';
+import { usePromptStore } from '../../store/promptStore';
 import { PatentUpload } from './PatentUpload';
 import { ClaimTreePanel } from './ClaimTreePanel';
 import { ClaimDetail } from './ClaimDetail';
@@ -9,6 +10,7 @@ import { CompareResult } from '../../types/patent';
 
 export function PatentPanel() {
   const { result, compareResult, isComparing, reset, setCompareResult, setComparing, setError } = usePatentStore();
+  const { openManager } = usePromptStore();
 
   const handleCompare = async () => {
     if (!result) return;
@@ -36,12 +38,35 @@ export function PatentPanel() {
 
   return (
     <main className="flex flex-col flex-1 h-full overflow-hidden bg-white">
-      {/* ── 상단 바 — 항상 표시 ────────────────────────────── */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 bg-white shrink-0 gap-3">
-        {/* LLM 선택기 */}
+      {/* ── 상단 바 ────────────────────────────────────────── */}
+      <div className="flex items-center gap-3 px-4 py-2 border-b border-gray-200 bg-white shrink-0">
+        {/* 좌: SPARK 로고 + 프롬프트 관리 */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex items-center gap-1.5">
+            <div className="w-6 h-6 bg-violet-600 rounded-md flex items-center justify-center">
+              <Zap size={12} className="text-white" />
+            </div>
+            <span className="text-sm font-bold text-gray-800 tracking-tight">SPARK</span>
+          </div>
+          <div className="w-px h-4 bg-gray-200" />
+          <button
+            onClick={openManager}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-gray-500
+              hover:text-gray-800 hover:bg-gray-100 transition-colors"
+          >
+            <Settings size={12} />
+            프롬프트 관리
+          </button>
+        </div>
+
+        <div className="w-px h-4 bg-gray-200" />
+
+        {/* 중: LLM 선택기 */}
         <LLMSelector />
 
-        {/* 특허 로드된 경우에만 오른쪽 액션 버튼 표시 */}
+        <div className="flex-1" />
+
+        {/* 우: 특허 로드 시 액션 버튼 */}
         {result && (
           <div className="flex items-center gap-2 shrink-0">
             <span className="text-xs text-gray-400 hidden sm:inline truncate max-w-[180px]">
@@ -76,7 +101,6 @@ export function PatentPanel() {
           </div>
         )}
 
-        {/* 특허 미로드 시 아이콘 */}
         {!result && (
           <div className="flex items-center gap-1.5 text-xs text-gray-400 shrink-0">
             <FileSearch size={13} />
@@ -90,8 +114,8 @@ export function PatentPanel() {
         <PatentUpload />
       ) : (
         <div className="flex flex-1 overflow-hidden">
-          {/* 좌: 청구항 트리 */}
-          <div className="w-72 shrink-0 overflow-hidden">
+          {/* 좌: 청구항 트리 — 사이드바 제거로 확보된 공간 활용 */}
+          <div className="w-[360px] shrink-0 overflow-hidden">
             <ClaimTreePanel />
           </div>
           {/* 우: 청구항 상세 + 검색 */}

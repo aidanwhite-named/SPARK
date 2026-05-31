@@ -1,19 +1,22 @@
-import { spawn, SpawnOptions } from 'child_process';
+import { spawn, SpawnOptions, ChildProcess } from 'child_process';
 
-// shell:true 환경에서 args 배열을 커맨드 문자열에 인라인으로 합침 (DEP0190 방지)
 function quoteArgs(command: string, args: string[]): string {
-  const parts = [command, ...args].map(a =>
-    /[ \t"'`]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a
+  const parts = [command, ...args].map((arg) =>
+    /[ \t"'`]/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg
   );
   return parts.join(' ');
 }
 
 export interface RunOptions {
-  timeout?: number;        // ms
+  timeout?: number;
+  idleTimeout?: number;
+  maxStdoutBytes?: number;
+  maxStderrBytes?: number;
+  maxLines?: number;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
-  stdinData?: string;      // 프로세스의 stdin으로 전달할 데이터
-  shell?: boolean;         // shell 모드 강제 지정 (기본: Windows=true, 그외=false)
+  stdinData?: string;
+  shell?: boolean;
 }
 
 export interface RunResult {
@@ -22,19 +25,37 @@ export interface RunResult {
   exitCode: number;
 }
 
-// ─────────────────────────────────────────────────────────────
-// CLI Executor
-// child_process.spawn 기반으로 CLI를 실행하고 결과를 수집
-// ─────────────────────────────────────────────────────────────
 export class CLIExecutor {
+  private terminate(child: ChildProcess, reason: string) {
+    if (child.killed) return;
+    console.warn(`[CLI] terminating pid=${child.pid ?? 'unknown'}: ${reason}`);
 
-  // ── 단일 실행 (결과를 모아서 반환) ──────────────────────────
+    if (process.platform === 'win32' && child.pid) {
+      spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      return;
+    }
+
+    child.kill('SIGTERM');
+  }
+
   async run(
     command: string,
     args: string[],
     options: RunOptions = {}
   ): Promise<RunResult> {
-    const { timeout = 120_000, cwd = process.cwd(), env = process.env, stdinData, shell } = options;
+    const {
+      timeout = 120_000,
+      idleTimeout = 30_000,
+      maxStdoutBytes = 2_000_000,
+      maxStderrBytes = 200_000,
+      cwd = process.cwd(),
+      env = process.env,
+      stdinData,
+      shell,
+    } = options;
     const useShell = shell ?? process.platform === 'win32';
 
     return new Promise((resolve, reject) => {
@@ -45,10 +66,13 @@ export class CLIExecutor {
         stdio: ['pipe', 'pipe', 'pipe'],
       };
 
-      // shell:true 시 args를 배열로 전달하면 DEP0190 경고 발생 — 커맨드에 인라인으로 합침
       const [spawnCmd, spawnArgs] = useShell
         ? [quoteArgs(command, args), [] as string[]]
         : [command, args];
+
+      const t0 = Date.now();
+      const label = `[CLI:run] ${command}`;
+      console.log(`${label} spawn (stdin ${stdinData ? `${stdinData.length} bytes` : 'none'})`);
 
       const child = spawn(spawnCmd, spawnArgs, spawnOpts);
 
@@ -61,23 +85,61 @@ export class CLIExecutor {
 
       let stdout = '';
       let stderr = '';
+      let firstData = false;
+      let settled = false;
+      let idleTimer: NodeJS.Timeout;
+      let timer: NodeJS.Timeout;
+
+      const fail = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearTimeout(idleTimer);
+        this.terminate(child, err.message);
+        reject(err);
+      };
+
+      const resetIdleTimer = () => {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          fail(new Error(`CLI idle timeout after ${idleTimeout}ms: ${command} ${args.join(' ')}`));
+        }, idleTimeout);
+      };
+
+      idleTimer = setTimeout(() => {
+        fail(new Error(`CLI idle timeout after ${idleTimeout}ms: ${command} ${args.join(' ')}`));
+      }, idleTimeout);
 
       child.stdout?.on('data', (data: Buffer) => {
+        resetIdleTimer();
+        if (!firstData) {
+          firstData = true;
+          console.log(`${label} first output at +${Date.now() - t0}ms`);
+        }
         stdout += data.toString('utf8');
+        if (stdout.length > maxStdoutBytes) {
+          fail(new Error(`CLI stdout limit exceeded (${maxStdoutBytes} bytes): ${command}`));
+        }
       });
 
       child.stderr?.on('data', (data: Buffer) => {
+        resetIdleTimer();
         stderr += data.toString('utf8');
+        if (stderr.length > maxStderrBytes) {
+          fail(new Error(`CLI stderr limit exceeded (${maxStderrBytes} bytes): ${command}`));
+        }
       });
 
-      // 타임아웃 처리
-      const timer = setTimeout(() => {
-        child.kill('SIGTERM');
-        reject(new Error(`CLI timeout after ${timeout}ms: ${command} ${args.join(' ')}`));
+      timer = setTimeout(() => {
+        fail(new Error(`CLI timeout after ${timeout}ms: ${command} ${args.join(' ')}`));
       }, timeout);
 
       child.on('close', (exitCode) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
+        clearTimeout(idleTimer);
+        console.log(`${label} done in ${Date.now() - t0}ms (exit ${exitCode}, stdout ${stdout.length} bytes)`);
         if (exitCode !== 0 && !stdout) {
           reject(new Error(`CLI error (exit ${exitCode}): ${stderr || 'Unknown error'}`));
         } else {
@@ -86,21 +148,28 @@ export class CLIExecutor {
       });
 
       child.on('error', (err) => {
-        clearTimeout(timer);
-        reject(new Error(`CLI spawn error: ${err.message}\nCommand: ${command}`));
+        fail(new Error(`CLI spawn error: ${err.message}\nCommand: ${command}`));
       });
     });
   }
 
-  // ── 스트리밍 실행 (줄 단위로 콜백 호출) ────────────────────
   async stream(
     command: string,
     args: string[],
     onLine: (line: string) => void,
     options: RunOptions = {}
   ): Promise<void> {
-    const { timeout = 300_000, cwd = process.cwd(), env = process.env, stdinData, shell } = options;
-    // Windows에서 .cmd 파일 실행을 위해 shell 필요. stdinData가 있어도 shell 유지.
+    const {
+      timeout = 300_000,
+      idleTimeout = 45_000,
+      maxStdoutBytes = 4_000_000,
+      maxStderrBytes = 200_000,
+      maxLines = 20_000,
+      cwd = process.cwd(),
+      env = process.env,
+      stdinData,
+      shell,
+    } = options;
     const useShell = shell ?? process.platform === 'win32';
 
     return new Promise((resolve, reject) => {
@@ -108,56 +177,122 @@ export class CLIExecutor {
         cwd,
         env,
         shell: useShell,
-        stdio: ['pipe', 'pipe', 'pipe'], // 항상 pipe로 통일 (stdin 제어 위해)
+        stdio: ['pipe', 'pipe', 'pipe'],
       };
 
       const [spawnCmd, spawnArgs] = useShell
         ? [quoteArgs(command, args), [] as string[]]
         : [command, args];
 
+      const t0 = Date.now();
+      const label = `[CLI:stream] ${command}`;
+      console.log(`${label} spawn (stdin ${stdinData ? `${stdinData.length} bytes` : 'none'})`);
+
       const child = spawn(spawnCmd, spawnArgs, spawnOpts);
 
-      // stdin으로 프롬프트 전달 후 닫기
       if (stdinData && child.stdin) {
         child.stdin.write(stdinData, 'utf8');
         child.stdin.end();
       } else if (child.stdin) {
-        child.stdin.end(); // stdin이 없으면 즉시 닫아야 프로세스가 대기하지 않음
+        child.stdin.end();
       }
 
       let buffer = '';
+      let lineCount = 0;
+      let stdoutBytes = 0;
+      let stderrBytes = 0;
+      let firstData = false;
+      let settled = false;
+      let idleTimer: NodeJS.Timeout;
+      let timer: NodeJS.Timeout;
+
+      const fail = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearTimeout(idleTimer);
+        this.terminate(child, err.message);
+        reject(err);
+      };
+
+      const resetIdleTimer = () => {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          fail(new Error(`CLI stream idle timeout after ${idleTimeout}ms: ${command}`));
+        }, idleTimeout);
+      };
+
+      idleTimer = setTimeout(() => {
+        fail(new Error(`CLI stream idle timeout after ${idleTimeout}ms: ${command}`));
+      }, idleTimeout);
 
       child.stdout?.on('data', (data: Buffer) => {
+        resetIdleTimer();
+        stdoutBytes += data.length;
+        if (stdoutBytes > maxStdoutBytes) {
+          fail(new Error(`CLI stream stdout limit exceeded (${maxStdoutBytes} bytes): ${command}`));
+          return;
+        }
+
+        if (!firstData) {
+          firstData = true;
+          console.log(`${label} first output at +${Date.now() - t0}ms`);
+        }
+
         buffer += data.toString('utf8');
         const lines = buffer.split('\n');
-        // 마지막 줄은 아직 미완성일 수 있으므로 버퍼에 유지
         buffer = lines.pop() ?? '';
         for (const line of lines) {
-          onLine(line);
+          lineCount++;
+          if (lineCount > maxLines) {
+            fail(new Error(`CLI stream line limit exceeded (${maxLines} lines): ${command}`));
+            return;
+          }
+          try {
+            onLine(line);
+          } catch (err) {
+            fail(err instanceof Error ? err : new Error(String(err)));
+            return;
+          }
         }
       });
 
       child.stderr?.on('data', (data: Buffer) => {
+        resetIdleTimer();
+        stderrBytes += data.length;
+        if (stderrBytes > maxStderrBytes) {
+          fail(new Error(`CLI stream stderr limit exceeded (${maxStderrBytes} bytes): ${command}`));
+          return;
+        }
         console.error('[CLI stderr]', data.toString('utf8'));
       });
 
-      const timer = setTimeout(() => {
-        child.kill('SIGTERM');
-        reject(new Error(`CLI stream timeout after ${timeout}ms`));
+      timer = setTimeout(() => {
+        fail(new Error(`CLI stream timeout after ${timeout}ms`));
       }, timeout);
 
       child.on('close', () => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
-        // 버퍼에 남은 내용 처리
+        clearTimeout(idleTimer);
+
         if (buffer.trim()) {
-          onLine(buffer);
+          lineCount++;
+          try {
+            onLine(buffer);
+          } catch (err) {
+            reject(err instanceof Error ? err : new Error(String(err)));
+            return;
+          }
         }
+
+        console.log(`${label} done in ${Date.now() - t0}ms (${lineCount} lines)`);
         resolve();
       });
 
       child.on('error', (err) => {
-        clearTimeout(timer);
-        reject(new Error(`CLI stream error: ${err.message}`));
+        fail(new Error(`CLI stream error: ${err.message}`));
       });
     });
   }

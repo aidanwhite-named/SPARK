@@ -32,6 +32,16 @@ export interface PatentParseResult {
   pdfText?: string;  // 전체 특허 원문 (채팅 컨텍스트용)
   priorityDate?: string;       // YYYY-MM-DD
   priorityDateLabel?: string;  // 화면 표시용 레이블
+  purposeAndEffect?: string;   // 발명의 목적 및 효과 섹션
+}
+
+export interface WeightItem {
+  label: string | null;
+  text: string;
+  weight: '핵심' | '보조' | '관용';
+  stars: 1 | 2 | 3;
+  reason: string;
+  isDep?: boolean; // 종속항 고유 구성 여부
 }
 
 export interface PatentChatMessage {

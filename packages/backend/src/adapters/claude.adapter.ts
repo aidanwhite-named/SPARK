@@ -1,4 +1,4 @@
-import { BaseLLMAdapter, LLMRequest, LLMResponse, StreamCallback, StreamChunk } from './base.adapter.js';
+import { BaseLLMAdapter, LLMRequest, LLMResponse, StreamCallback } from './base.adapter.js';
 import { CLIExecutor } from '../executor/cli.executor.js';
 
 export class ClaudeAdapter extends BaseLLMAdapter {
@@ -8,10 +8,16 @@ export class ClaudeAdapter extends BaseLLMAdapter {
   private executor: CLIExecutor;
 
   private readonly models = [
-    'claude-opus-4-7',
-    'claude-sonnet-4-6',
     'claude-haiku-4-5-20251001',
+    'claude-sonnet-4-6',
+    'claude-opus-4-7',
   ];
+
+  private readonly completeTimeoutMs = 45_000;
+  private readonly streamTimeoutMs = 120_000;
+  private readonly idleTimeoutMs = 20_000;
+  private readonly maxStreamTextBytes = 120_000;
+  private readonly maxToolCalls = 8;
 
   constructor() {
     super();
@@ -22,9 +28,16 @@ export class ClaudeAdapter extends BaseLLMAdapter {
     return this.models;
   }
 
+  private assertSupportedModel(model?: string) {
+    if (!model) return;
+    if (!this.models.includes(model)) {
+      throw new Error(`Unsupported Claude model "${model}". Allowed: ${this.models.join(', ')}`);
+    }
+  }
+
   async isAvailable(): Promise<boolean> {
     try {
-      await this.executor.run('claude', ['--version'], { timeout: 5000 });
+      await this.executor.run('claude', ['--version'], { timeout: 5000, idleTimeout: 3000 });
       return true;
     } catch {
       return false;
@@ -32,34 +45,51 @@ export class ClaudeAdapter extends BaseLLMAdapter {
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
+    this.assertSupportedModel(request.model);
+
     const start = Date.now();
     const finalPrompt = this.buildFinalPrompt(request);
+    const model = request.model ?? '(default)';
+    console.log(`[Claude:complete] model=${model} | prompt=${finalPrompt.length} bytes`);
 
-    // 프롬프트는 stdin으로 전달 — args로 넘기면 shell이 특수문자를 망가뜨림
-    const args = ['--print'];
+    const args = ['--print', '--dangerously-skip-permissions'];
     if (request.model) {
       args.push('--model', request.model);
     }
 
-    const result = await this.executor.run('claude', args, { stdinData: finalPrompt });
+    const result = await this.executor.run('claude', args, {
+      stdinData: finalPrompt,
+      timeout: this.completeTimeoutMs,
+      idleTimeout: this.idleTimeoutMs,
+      maxStdoutBytes: 250_000,
+      maxStderrBytes: 80_000,
+    });
+
+    const durationMs = Date.now() - start;
+    console.log(`[Claude:complete] done in ${durationMs}ms | response=${result.stdout.trim().length} bytes`);
 
     return {
       content: result.stdout.trim(),
       llmType: this.llmType,
       model: request.model,
-      durationMs: Date.now() - start,
+      durationMs,
     };
   }
 
   async stream(request: LLMRequest, onChunk: StreamCallback): Promise<void> {
+    this.assertSupportedModel(request.model);
+
     const finalPrompt = this.buildFinalPrompt(request);
+    const model = request.model ?? '(default)';
+    const t0 = Date.now();
+    console.log(`[Claude:stream] model=${model} | prompt=${finalPrompt.length} bytes`);
 
     const args = [
       '--print',
       '--verbose',
       '--output-format', 'stream-json',
       '--include-partial-messages',
-      '--allowedTools', 'WebSearch,WebFetch,Bash',
+      '--allowedTools', 'WebSearch,WebFetch',
       '--dangerously-skip-permissions',
     ];
     if (request.model) {
@@ -67,10 +97,32 @@ export class ClaudeAdapter extends BaseLLMAdapter {
     }
 
     let lastAssistantText = '';
+    let firstChunk = false;
+    let toolCallCount = 0;
+    let done = false;
 
     await this.executor.stream('claude', args, (line) => {
       try {
         const parsed = JSON.parse(line);
+
+        if (parsed.type === 'error') {
+          throw new Error(parsed.error?.message ?? parsed.message ?? 'Claude stream error');
+        }
+
+        if (parsed.type === 'assistant' && parsed.message?.content) {
+          for (const block of parsed.message.content) {
+            if (block.type === 'tool_use') {
+              toolCallCount++;
+              if (toolCallCount > this.maxToolCalls) {
+                throw new Error(`Claude tool-call limit exceeded (${this.maxToolCalls})`);
+              }
+              console.log(
+                `[Claude:stream] tool_use #${toolCallCount}: ${block.name} at +${Date.now() - t0}ms`,
+                block.input ? JSON.stringify(block.input).slice(0, 120) : ''
+              );
+            }
+          }
+        }
 
         if (parsed.type === 'assistant' && parsed.message?.content) {
           let fullText = '';
@@ -79,17 +131,45 @@ export class ClaudeAdapter extends BaseLLMAdapter {
               fullText += block.text;
             }
           }
+
+          if (fullText.length > this.maxStreamTextBytes) {
+            throw new Error(`Claude output limit exceeded (${this.maxStreamTextBytes} bytes)`);
+          }
+
           if (fullText.length > lastAssistantText.length) {
             const newPart = fullText.slice(lastAssistantText.length);
-            if (newPart) onChunk({ type: 'chunk', content: newPart });
+            if (newPart) {
+              if (!firstChunk) {
+                firstChunk = true;
+                console.log(`[Claude:stream] first text chunk at +${Date.now() - t0}ms`);
+              }
+              onChunk({ type: 'chunk', content: newPart });
+            }
             lastAssistantText = fullText;
           }
         } else if (parsed.type === 'result') {
+          done = true;
+          console.log(
+            `[Claude:stream] done at +${Date.now() - t0}ms | tool calls=${toolCallCount} | total text=${lastAssistantText.length} bytes`
+          );
           onChunk({ type: 'done' });
         }
-      } catch {
-        // JSON 파싱 실패 시 무시
+      } catch (err) {
+        if (line.trim().startsWith('{')) {
+          throw err;
+        }
       }
-    }, { stdinData: finalPrompt });
+    }, {
+      stdinData: finalPrompt,
+      timeout: this.streamTimeoutMs,
+      idleTimeout: this.idleTimeoutMs,
+      maxStdoutBytes: 1_000_000,
+      maxStderrBytes: 80_000,
+      maxLines: 5_000,
+    });
+
+    if (!done) {
+      onChunk({ type: 'done' });
+    }
   }
 }

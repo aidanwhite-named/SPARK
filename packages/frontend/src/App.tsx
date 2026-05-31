@@ -1,5 +1,4 @@
 import React, { useEffect } from 'react';
-import { Sidebar } from './components/layout/Sidebar';
 import { PromptManager } from './components/prompt/PromptManager';
 import { PatentPanel } from './components/patent/PatentPanel';
 import { usePromptStore } from './store/promptStore';
@@ -18,7 +17,6 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-white overflow-hidden font-sans">
-      <Sidebar />
       <PatentPanel />
       <PromptManager />
     </div>

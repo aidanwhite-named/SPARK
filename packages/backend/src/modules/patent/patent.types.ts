@@ -34,4 +34,5 @@ export interface PatentParseResult {
   validation?: import('./validator.types.js').ValidationResult;
   priorityDate?: string;   // YYYY-MM-DD — 우선권주장일 / 심사청구일 / 출원일
   priorityDateLabel?: string; // 화면 표시용 레이블
+  purposeAndEffect?: string; // 발명의 목적 및 효과 섹션
 }

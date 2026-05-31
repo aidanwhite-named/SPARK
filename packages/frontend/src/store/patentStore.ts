@@ -6,16 +6,19 @@ import {
   ParsedIndependentClaim,
   PatentChatMessage,
   PatentParseResult,
+  WeightItem,
 } from '../types/patent';
 
 interface PatentState {
   result: PatentParseResult | null;
+  fileName: string | null;
   pdfText: string | null;
   // 직접 입력 시 참고 자료 (PDF 또는 URL에서 추출한 텍스트)
   contextText: string | null;
   contextSource: 'pdf' | 'url' | null;
   priorityDate: string | null;       // YYYY-MM-DD
   priorityDateLabel: string | null;  // 화면 표시용 레이블
+  purposeAndEffect: string | null;   // 발명의 목적 및 효과
   selectedTree: ClaimTree | null;
   selectedDependent: ParsedDependentClaim | null;
   searchPromptId: string | null;
@@ -29,8 +32,11 @@ interface PatentState {
   chatHistories: Record<number, PatentChatMessage[]>;
   // 스트리밍 중인 청구항 번호 (null이면 미스트리밍)
   streamingClaimNumber: number | null;
+  // 청구항 번호별 가중치 분석 결과
+  weightResults: Record<number, WeightItem[]>;
 
-  setResult: (r: PatentParseResult, pdfText: string, contextText?: string, contextSource?: 'pdf' | 'url', priorityDate?: string, priorityDateLabel?: string) => void;
+  setFileName: (name: string | null) => void;
+  setResult: (r: PatentParseResult, pdfText: string, contextText?: string, contextSource?: 'pdf' | 'url', priorityDate?: string, priorityDateLabel?: string, purposeAndEffect?: string) => void;
   selectTree: (tree: ClaimTree | null) => void;
   selectDependent: (dep: ParsedDependentClaim | null) => void;
   setSearchPromptId: (id: string | null) => void;
@@ -44,19 +50,25 @@ interface PatentState {
 
   // 채팅 액션
   addMessage: (claimNumber: number, msg: PatentChatMessage) => void;
-  startStreaming: (claimNumber: number) => void;       // 어시스턴트 스트리밍 플레이스홀더 추가
+  startStreaming: (claimNumber: number) => void;
   appendStreamChunk: (claimNumber: number, text: string) => void;
   finalizeStreaming: (claimNumber: number) => void;
   clearChat: (claimNumber: number) => void;
+  // 가중치 액션
+  setWeights: (claimNumber: number, weights: WeightItem[]) => void;
+  updateWeight: (claimNumber: number, index: number, weight: '핵심' | '보조' | '관용') => void;
+  clearWeights: (claimNumber: number) => void;
 }
 
 export const usePatentStore = create<PatentState>((set, get) => ({
   result: null,
+  fileName: null,
   pdfText: null,
   contextText: null,
   contextSource: null,
   priorityDate: null,
   priorityDateLabel: null,
+  purposeAndEffect: null,
   selectedTree: null,
   selectedDependent: null,
   searchPromptId: null,
@@ -67,6 +79,9 @@ export const usePatentStore = create<PatentState>((set, get) => ({
   error: null,
   chatHistories: {},
   streamingClaimNumber: null,
+  weightResults: {},
+
+  setFileName: (fileName) => set({ fileName }),
 
   setResult: (result, pdfText, contextText, contextSource, priorityDate, priorityDateLabel) =>
     set({
@@ -75,7 +90,8 @@ export const usePatentStore = create<PatentState>((set, get) => ({
       contextSource: contextSource ?? null,
       priorityDate: priorityDate ?? null,
       priorityDateLabel: priorityDateLabel ?? null,
-      selectedTree: null, selectedDependent: null, compareResult: null, chatHistories: {}, error: null,
+      purposeAndEffect: result.purposeAndEffect ?? null,
+      selectedTree: null, selectedDependent: null, compareResult: null, chatHistories: {}, weightResults: {}, error: null,
     }),
 
   selectTree: (selectedTree) => set({ selectedTree, selectedDependent: null }),
@@ -106,11 +122,13 @@ export const usePatentStore = create<PatentState>((set, get) => ({
 
   reset: () => set({
     result: null,
+    fileName: null,
     pdfText: null,
     contextText: null,
     contextSource: null,
     priorityDate: null,
     priorityDateLabel: null,
+    purposeAndEffect: null,
     selectedTree: null,
     selectedDependent: null,
     searchPromptId: null,
@@ -121,6 +139,7 @@ export const usePatentStore = create<PatentState>((set, get) => ({
     error: null,
     chatHistories: {},
     streamingClaimNumber: null,
+    weightResults: {},
   }),
 
   addMessage: (claimNumber, msg) =>
@@ -170,4 +189,24 @@ export const usePatentStore = create<PatentState>((set, get) => ({
     set(s => ({
       chatHistories: { ...s.chatHistories, [claimNumber]: [] },
     })),
+
+  setWeights: (claimNumber, weights) =>
+    set(s => ({ weightResults: { ...s.weightResults, [claimNumber]: weights } })),
+
+  updateWeight: (claimNumber, index, weight) =>
+    set(s => {
+      const current = s.weightResults[claimNumber] ?? [];
+      const stars: 1 | 2 | 3 = weight === '핵심' ? 3 : weight === '보조' ? 2 : 1;
+      const updated = current.map((item, i) =>
+        i === index ? { ...item, weight, stars } : item
+      );
+      return { weightResults: { ...s.weightResults, [claimNumber]: updated } };
+    }),
+
+  clearWeights: (claimNumber) =>
+    set(s => {
+      const next = { ...s.weightResults };
+      delete next[claimNumber];
+      return { weightResults: next };
+    }),
 }));

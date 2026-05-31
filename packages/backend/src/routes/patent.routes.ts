@@ -1,10 +1,21 @@
 import { FastifyInstance } from 'fastify';
 import multipart from '@fastify/multipart';
-import { extractTextFromPdf } from '../modules/patent/pdf.extractor.js';
+import { createHash } from 'crypto';
+import { extractTextFromPdf, extractPurposeAndEffect } from '../modules/patent/pdf.extractor.js';
 import { buildClaimTrees, extractClaimsFromText } from '../modules/patent/claim.parser.js';
 import { extractPatentDate } from '../modules/patent/date.extractor.js';
 import { validateClaims } from '../modules/patent/claim.validator.js';
-import { analyzeClaimWithLLM, buildMultiTurnPrompt, formatClaimStructure, SEARCH_INSTRUCTIONS } from '../modules/patent/llm.analyzer.js';
+import {
+  analyzeClaimWithLLM,
+  analyzeWeights,
+  buildFastSearchPrompt,
+  buildMultiTurnPrompt,
+  buildSearchInstructions,
+  FAST_SEARCH_MODELS,
+  formatClaimStructure,
+  SEARCH_MODELS,
+  WeightItem,
+} from '../modules/patent/llm.analyzer.js';
 import { compareClaims } from '../modules/patent/claim.comparator.js';
 import { fetchUrlContent } from '../modules/patent/url.fetcher.js';
 import { adapterFactory } from '../adapters/adapter.factory.js';
@@ -14,6 +25,35 @@ import { PatentParseResult, ClaimPart } from '../modules/patent/patent.types.js'
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+}
+
+const CACHE_TTL_MS = 30 * 60 * 1000;
+const weightCache = new Map<string, { expiresAt: number; weights: WeightItem[] }>();
+const weightInflight = new Map<string, Promise<WeightItem[]>>();
+const searchCache = new Map<string, { expiresAt: number; content: string }>();
+const searchInflight = new Map<string, Promise<string>>();
+const claimAnalysisCache = new Map<string, { expiresAt: number; parts: ClaimPart[] }>();
+const claimAnalysisInflight = new Map<string, Promise<ClaimPart[]>>();
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const obj = value as Record<string, unknown>;
+  return `{${Object.keys(obj).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(obj[key])}`).join(',')}}`;
+}
+
+function cacheKey(prefix: string, value: unknown): string {
+  return `${prefix}:${createHash('sha256').update(stableStringify(value)).digest('hex')}`;
+}
+
+function getFresh<T>(cache: Map<string, { expiresAt: number; } & T>, key: string): ({ expiresAt: number; } & T) | undefined {
+  const hit = cache.get(key);
+  if (!hit) return undefined;
+  if (hit.expiresAt <= Date.now()) {
+    cache.delete(key);
+    return undefined;
+  }
+  return hit;
 }
 
 export async function patentRoutes(app: FastifyInstance) {
@@ -48,12 +88,17 @@ export async function patentRoutes(app: FastifyInstance) {
     const validation = validateClaims(claimTexts, pdfText);
     const result = buildClaimTrees(claimTexts);
     const patentDate = extractPatentDate(pdfText);
+    const purposeAndEffect = extractPurposeAndEffect(pdfText);
+    console.log('[DEBUG] purposeAndEffect:', purposeAndEffect ? purposeAndEffect.slice(0, 100) : null);
+    const headers = [...pdfText.matchAll(/[【\[〔<][^】\]〕>]{1,30}[】\]〕>]/g)].slice(0, 20).map(m => m[0]);
+    console.log('[DEBUG] PDF 섹션헤더 샘플:', headers);
     return reply.send({
       ...result,
       pdfText,
       validation,
       priorityDate: patentDate?.date,
       priorityDateLabel: patentDate?.label,
+      purposeAndEffect,
     });
   });
 
@@ -79,7 +124,6 @@ export async function patentRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: '청구항 텍스트가 필요합니다' });
     }
 
-    // 참고 자료 추출
     let contextText: string | undefined;
     let contextSource: 'pdf' | 'url' | undefined;
 
@@ -111,22 +155,72 @@ export async function patentRoutes(app: FastifyInstance) {
     return reply.send({ ...result, pdfText: '', contextText, contextSource });
   });
 
-  // ── 특정 청구항 LLM 구성 분석 ────────────────────────────────
+  // ── 청구항 LLM 구성 분석 ──────────────────────────────────────
   app.post<{ Body: { claimNumber: number; rawText: string } }>(
     '/api/patent/analyze-claim',
     async (req, reply) => {
       const { rawText } = req.body;
       if (!rawText) return reply.status(400).send({ error: 'rawText가 필요합니다' });
-      const parts = await analyzeClaimWithLLM(rawText);
+      const key = cacheKey('claim-analysis', { rawText });
+      const cached = getFresh(claimAnalysisCache, key);
+      if (cached) return reply.send({ parts: cached.parts, cached: true });
+
+      let promise = claimAnalysisInflight.get(key);
+      if (!promise) {
+        promise = analyzeClaimWithLLM(rawText);
+        claimAnalysisInflight.set(key, promise);
+      }
+
+      const parts = await promise.finally(() => claimAnalysisInflight.delete(key));
+      claimAnalysisCache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, parts });
       return reply.send({ parts });
     }
   );
+
+  // ── 구성 가중치 분석 — 경량 모델 ─────────────────────────────
+  app.post<{
+    Body: {
+      claimNumber: number;
+      parts: ClaimPart[];
+      dependentClaimText?: string;
+      llmType: string;
+    };
+  }>('/api/patent/weight', async (req, reply) => {
+    const { claimNumber, parts, dependentClaimText, llmType } = req.body;
+    const t0 = Date.now();
+    console.log(`\n${'─'.repeat(60)}`);
+    console.log(`[WEIGHT] ▶ 시작 | claim=${claimNumber} | llm=${llmType} | parts=${parts?.length}`);
+    console.log(`[WEIGHT]   dep=${!!dependentClaimText}`);
+    try {
+      const key = cacheKey('weight', { claimNumber, parts, dependentClaimText, llmType });
+      const cached = getFresh(weightCache, key);
+      if (cached) {
+        console.log(`[WEIGHT] cache hit | claim=${claimNumber} | llm=${llmType}`);
+        return reply.send({ weights: cached.weights, cached: true });
+      }
+
+      let promise = weightInflight.get(key);
+      if (!promise) {
+        promise = analyzeWeights(parts, claimNumber, llmType, dependentClaimText);
+        weightInflight.set(key, promise);
+      }
+
+      const weights = await promise.finally(() => weightInflight.delete(key));
+      weightCache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, weights });
+      console.log(`[WEIGHT] ✅ 완료 in ${Date.now() - t0}ms | weights=${weights.length}개`);
+      return reply.send({ weights });
+    } catch (err) {
+      console.error(`[WEIGHT] ❌ 오류 in ${Date.now() - t0}ms`, err);
+      return reply.status(500).send({ error: String(err) });
+    }
+  });
 
   // ── 선행발명 검색 — 멀티턴 SSE ───────────────────────────────
   app.post<{
     Body: {
       claimNumber: number;
       parts: ClaimPart[];
+      dependentClaimText?: string;
       llmType: string;
       pdfText?: string;
       promptContent?: string;
@@ -135,9 +229,22 @@ export async function patentRoutes(app: FastifyInstance) {
       contextSource?: 'pdf' | 'url';
       priorityDate?: string;
       priorityDateLabel?: string;
+      weights?: WeightItem[];   // 사전 분석된 가중치 (있으면 step2 건너뜀)
+      mode?: 'fast' | 'precise';
+      fastResult?: string;
     };
   }>('/api/patent/search', async (req, reply) => {
-    const { claimNumber, parts, llmType, pdfText, promptContent, messages, contextText, contextSource, priorityDate, priorityDateLabel } = req.body;
+    const {
+      claimNumber, parts, dependentClaimText, llmType, pdfText, promptContent,
+      messages, contextText, contextSource, priorityDate, priorityDateLabel, weights,
+      mode = 'precise', fastResult,
+    } = req.body;
+
+    const t0 = Date.now();
+    console.log(`\n${'─'.repeat(60)}`);
+    console.log(`[SEARCH] ▶ 시작 | claim=${claimNumber} | llm=${llmType} | mode=${mode}`);
+    console.log(`[SEARCH]   parts=${parts?.length} | messages=${messages?.length} | weights=${weights?.length ?? 0}개 사전제공`);
+    console.log(`[SEARCH]   pdfText=${pdfText?.length ?? 0} bytes | contextText=${contextText?.length ?? 0} bytes | priorityDate=${priorityDate ?? 'none'}`);
 
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -145,7 +252,6 @@ export async function patentRoutes(app: FastifyInstance) {
       Connection: 'keep-alive',
     });
 
-    // 클라이언트가 연결을 끊어도 서버가 죽지 않도록 소켓 에러를 조용히 처리
     reply.raw.on('error', () => { /* ignore EPIPE / write-after-close */ });
 
     let closed = false;
@@ -160,34 +266,97 @@ export async function patentRoutes(app: FastifyInstance) {
       }
     };
 
-    const claimStructure = formatClaimStructure(parts, claimNumber);
-
-    const resolvedMessages = messages.map((m, i) => {
-      if (i === 0 && m.role === 'user') {
-        const content = promptContent
-          ? (promptContent.includes('{{claim}}')
-              ? promptContent.replace(/\{\{claim\}\}/g, claimStructure)
-              : `${promptContent}\n\n${claimStructure}`)
-          : SEARCH_INSTRUCTIONS;
-        return { role: 'user' as const, content };
-      }
-      return m;
-    });
-
-    const fullPrompt = buildMultiTurnPrompt(
-      pdfText ?? '',
-      claimStructure,
-      resolvedMessages,
-      { contextText, contextSource, priorityDate, priorityDateLabel }
-    );
-    const adapter = adapterFactory.get((llmType as LLMType) ?? 'claude');
-
     try {
-      await adapter.stream(
-        { prompt: '', userInput: fullPrompt, stream: true } as LLMRequest,
-        (chunk) => send(chunk)
-      );
+      const claimStructure = formatClaimStructure(parts, claimNumber);
+      console.log(`[SEARCH]   claimStructure preview: ${claimStructure.slice(0, 120)}`);
+
+      // 첫 번째 user 메시지의 내용 결정
+      // - 가중치 사전 제공 → buildSearchInstructions(weights)
+      // - 커스텀 프롬프트 → promptContent 적용
+      // - 기본 → SEARCH_INSTRUCTIONS
+      const resolvedMessages = messages.map((m, i) => {
+        if (i === 0 && m.role === 'user') {
+          let content: string;
+          if (weights && weights.length > 0) {
+            content = buildSearchInstructions(weights);
+          } else if (promptContent) {
+            content = promptContent.includes('{{claim}}')
+              ? promptContent.replace(/\{\{claim\}\}/g, claimStructure)
+              : `${promptContent}\n\n${claimStructure}`;
+          } else {
+            content = buildSearchInstructions();
+          }
+          if (fastResult?.trim()) {
+            content += `\n\n[빠른검색 결과 캐시]\n아래는 직전 빠른검색에서 이미 확인한 후보와 검색 방향이다. 중복 탐색은 줄이고, 누락 가능성이 큰 핵심 구성 위주로 정밀하게 재검색하라.\n${fastResult.slice(0, 12000)}`;
+          }
+          return { role: 'user' as const, content };
+        }
+        return m;
+      });
+
+      const tPrompt = Date.now();
+      const fullPrompt = mode === 'fast'
+        ? buildFastSearchPrompt({
+            claimStructure,
+            dependentClaimText,
+            promptContent,
+            priorityDate,
+            priorityDateLabel,
+          })
+        : buildMultiTurnPrompt(
+            pdfText ?? '',
+            claimStructure,
+            resolvedMessages,
+            { contextText, contextSource, priorityDate, priorityDateLabel, dependentClaimText }
+          );
+      console.log(`[SEARCH]   fullPrompt built in ${Date.now() - tPrompt}ms | length=${fullPrompt.length} bytes`);
+
+      // 검색에는 더 강력한 모델 사용
+      const searchModel = mode === 'fast'
+        ? (FAST_SEARCH_MODELS[llmType] ?? FAST_SEARCH_MODELS.claude)
+        : (SEARCH_MODELS[llmType] ?? SEARCH_MODELS.claude);
+      const searchKey = cacheKey('search', { mode, llmType, searchModel, fullPrompt });
+      const cached = getFresh(searchCache, searchKey);
+      if (cached) {
+        console.log(`[SEARCH] cache hit | claim=${claimNumber} | llm=${llmType}`);
+        send({ type: 'chunk', content: cached.content, cached: true });
+        send({ type: 'done', cached: true });
+        return;
+      }
+
+      const inflight = searchInflight.get(searchKey);
+      if (inflight) {
+        console.log(`[SEARCH] join in-flight request | claim=${claimNumber} | llm=${llmType}`);
+        const content = await inflight;
+        send({ type: 'chunk', content, cached: true });
+        send({ type: 'done', cached: true });
+        return;
+      }
+
+      console.log(`[SEARCH] ⚡ LLM 스트림 시작 | model=${searchModel}`);
+      const adapter = adapterFactory.get((llmType as LLMType) ?? 'claude');
+      let chunkCount = 0;
+      let accumulated = '';
+      const streamPromise = adapter.stream(
+          { prompt: '', userInput: fullPrompt, stream: true, model: searchModel } as LLMRequest,
+          (chunk) => {
+            if (chunk.type === 'chunk') {
+              chunkCount++;
+              accumulated += chunk.content ?? '';
+            }
+            send(chunk);
+          }
+        )
+        .then(() => {
+          searchCache.set(searchKey, { expiresAt: Date.now() + CACHE_TTL_MS, content: accumulated });
+          return accumulated;
+        })
+        .finally(() => searchInflight.delete(searchKey));
+      searchInflight.set(searchKey, streamPromise);
+      await streamPromise;
+      console.log(`[SEARCH] ✅ 스트림 완료 in ${Date.now() - t0}ms | SSE chunks=${chunkCount}`);
     } catch (err) {
+      console.error(`[SEARCH] ❌ 오류 in ${Date.now() - t0}ms`, err);
       send({ type: 'error', error: String(err) });
     } finally {
       reply.raw.end();

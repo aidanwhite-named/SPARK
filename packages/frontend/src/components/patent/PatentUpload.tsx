@@ -8,7 +8,7 @@ type InputMode = 'pdf' | 'text';
 type ContextType = 'pdf' | 'url';
 
 export function PatentUpload() {
-  const { setResult, setUploading, setError, isUploading } = usePatentStore();
+  const { setResult, setFileName, setUploading, setError, isUploading } = usePatentStore();
   const [mode, setMode] = useState<InputMode>('pdf');
 
   return (
@@ -53,7 +53,7 @@ export function PatentUpload() {
       </div>
 
       {mode === 'pdf'
-        ? <PdfUploadPanel setResult={setResult} setUploading={setUploading} setError={setError} isUploading={isUploading} />
+        ? <PdfUploadPanel setResult={setResult} setFileName={setFileName} setUploading={setUploading} setError={setError} isUploading={isUploading} />
         : <TextInputPanel setResult={setResult} setUploading={setUploading} setError={setError} isUploading={isUploading} />
       }
 
@@ -64,13 +64,14 @@ export function PatentUpload() {
 
 // ── PDF 업로드 패널 ──────────────────────────────────────────
 interface PanelProps {
-  setResult: (r: PatentParseResult, pdfText: string, contextText?: string, contextSource?: 'pdf' | 'url') => void;
+  setResult: (r: PatentParseResult, pdfText: string, contextText?: string, contextSource?: 'pdf' | 'url', priorityDate?: string, priorityDateLabel?: string) => void;
+  setFileName?: (name: string | null) => void;
   setUploading: (v: boolean) => void;
   setError: (e: string | null) => void;
   isUploading: boolean;
 }
 
-function PdfUploadPanel({ setResult, setUploading, setError, isUploading }: PanelProps) {
+function PdfUploadPanel({ setResult, setFileName, setUploading, setError, isUploading }: PanelProps) {
   const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -90,6 +91,7 @@ function PdfUploadPanel({ setResult, setUploading, setError, isUploading }: Pane
         throw new Error(err.error ?? '파싱 실패');
       }
       const data: PatentParseResult & { pdfText?: string } = await res.json();
+      setFileName?.(file.name);
       setResult(data, data.pdfText ?? '', undefined, undefined, data.priorityDate, data.priorityDateLabel);
     } catch (e) {
       setError(String(e));

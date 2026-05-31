@@ -1,46 +1,66 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import {
   Sparkles, Search, ChevronDown, Settings, AlertTriangle,
-  Send, RotateCcw, ChevronUp,
+  Send, RotateCcw, ChevronUp, Loader2, Scale,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { usePatentStore } from '../../store/patentStore';
 import { useSettingsStore } from '../../store/settingsStore';
 import { usePromptStore } from '../../store/promptStore';
-import { ClaimPart, PatentChatMessage } from '../../types/patent';
+import { ClaimPart, PatentChatMessage, WeightItem } from '../../types/patent';
 import { cn } from '../../lib/utils';
+
+// 검색 단계: idle → weighting → confirming → (idle + streaming)
+type SearchPhase = 'idle' | 'weighting' | 'confirming' | 'fastReview';
+type ErrorKind = 'weight' | 'search' | null;
+type SearchMode = 'fast' | 'precise';
+
+const WEIGHT_STARS: Record<string, string> = { '핵심': '★★★', '보조': '★★☆', '관용': '★☆☆' };
+const WEIGHT_COLOR: Record<string, string> = {
+  '핵심': 'text-rose-600 bg-rose-50 border-rose-200',
+  '보조': 'text-amber-600 bg-amber-50 border-amber-200',
+  '관용': 'text-gray-500 bg-gray-50 border-gray-200',
+};
 
 export function ClaimDetail() {
   const {
     selectedTree, selectedDependent,
-    pdfText, contextText, contextSource, priorityDate, priorityDateLabel,
+    pdfText, contextText, contextSource, priorityDate, priorityDateLabel, purposeAndEffect,
     searchPromptId, setSearchPromptId,
     isAnalyzing, streamingClaimNumber,
-    setAnalyzing, setError,
+    setAnalyzing, setError, error,
     addMessage, startStreaming, appendStreamChunk, finalizeStreaming,
     updateClaimParts, clearChat, chatHistories,
+    weightResults, setWeights, updateWeight, clearWeights,
   } = usePatentStore();
   const { selectedLLM } = useSettingsStore();
   const { prompts, openManager } = usePromptStore();
   const [input, setInput] = useState('');
+  const [phase, setPhase] = useState<SearchPhase>('idle');
+  const [errorKind, setErrorKind] = useState<ErrorKind>(null);
   const [structureOpen, setStructureOpen] = useState(true);
+  const [purposeOpen, setPurposeOpen] = useState(false);
+  const [fastResult, setFastResult] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // ── 선택된 항 관련 값 (null-safe) ──────────────────────────
-  const claimNumber = selectedTree?.root.number ?? 0;
+  const claimNumber = selectedDependent?.number ?? selectedTree?.root.number ?? 0;
   const messages = chatHistories[claimNumber] ?? [];
   const isStreaming = streamingClaimNumber === claimNumber;
+  const weights = weightResults[claimNumber] ?? [];
   const selectedPrompt = prompts.find(p => p.id === searchPromptId) ?? null;
 
-  // ── 훅은 조건부 리턴 이전에 모두 선언 ──────────────────────
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length, isStreaming]);
+  }, [messages.length, isStreaming, phase]);
 
   useEffect(() => {
     setInput('');
+    setPhase('idle');
+    setErrorKind(null);
+    setFastResult('');
+    setError(null);
   }, [claimNumber]);
 
   const getHistoryForSend = useCallback(
@@ -54,30 +74,44 @@ export function ClaimDetail() {
     [messages]
   );
 
+  // 검색 SSE 스트리밍
   const streamSearch = useCallback(async (
-    historyForSend: { role: 'user' | 'assistant'; content: string }[]
-  ) => {
-    if (!selectedTree) return;
+    historyForSend: { role: 'user' | 'assistant'; content: string }[],
+    searchWeights?: WeightItem[],
+    mode: SearchMode = 'precise',
+    priorFastResult?: string
+  ): Promise<string> => {
+    if (!selectedTree) return '';
     startStreaming(claimNumber);
+    let accumulated = '';
 
     try {
+      setErrorKind('search');
       const res = await fetch('/api/patent/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           claimNumber,
           parts: selectedTree.root.parts,
+          dependentClaimText: selectedDependent?.rawText,
           llmType: selectedLLM ?? 'claude',
-          pdfText: pdfText ?? '',
-          promptContent: selectedPrompt?.content,
+          pdfText: mode === 'precise' ? (pdfText ?? '').slice(0, 40000) : '',
+          promptContent: searchWeights ? undefined : selectedPrompt?.content,
           messages: historyForSend,
-          contextText: contextText ?? undefined,
-          contextSource: contextSource ?? undefined,
+          contextText: mode === 'precise' ? contextText ?? undefined : undefined,
+          contextSource: mode === 'precise' ? contextSource ?? undefined : undefined,
           priorityDate: priorityDate ?? undefined,
           priorityDateLabel: priorityDateLabel ?? undefined,
+          weights: searchWeights,
+          mode,
+          fastResult: priorFastResult,
         }),
       });
 
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`검색 오류 (${res.status}): ${errText}`);
+      }
       if (!res.body) throw new Error('스트림 없음');
       const reader = res.body.getReader();
       const dec = new TextDecoder();
@@ -87,7 +121,10 @@ export function ClaimDetail() {
         if (!line.startsWith('data: ')) return;
         try {
           const evt = JSON.parse(line.slice(6));
-          if (evt.type === 'chunk' && evt.content) appendStreamChunk(claimNumber, evt.content);
+          if (evt.type === 'chunk' && evt.content) {
+            accumulated += evt.content;
+            appendStreamChunk(claimNumber, evt.content);
+          }
           else if (evt.type === 'done') finalizeStreaming(claimNumber);
           else if (evt.type === 'error') { setError(evt.error); finalizeStreaming(claimNumber); }
         } catch { /* skip */ }
@@ -103,20 +140,101 @@ export function ClaimDetail() {
       }
       if (buf.trim()) buf.split('\n').forEach(processLine);
       finalizeStreaming(claimNumber);
+      return accumulated;
     } catch (e) {
       setError(String(e));
       finalizeStreaming(claimNumber);
+      return accumulated;
     }
-  }, [selectedTree, claimNumber, selectedLLM, pdfText, contextText, contextSource, selectedPrompt,
-      startStreaming, appendStreamChunk, finalizeStreaming, setError]);
+  }, [selectedTree, selectedDependent, claimNumber, selectedLLM, pdfText, contextText,
+      contextSource, selectedPrompt, startStreaming, appendStreamChunk, finalizeStreaming, setError]);
 
-  const handleSearchStart = useCallback(async () => {
-    if (isStreaming || !selectedTree) return;
+  const hasHighSimilarityCandidate = (content: string) => {
+    if (/85%\s*이상\s*후보\s*없음|85%\s*이상.*없음|후보\s*없음/i.test(content)) return false;
+    const scores = [...content.matchAll(/(\d{1,3})\s*%/g)]
+      .map(m => Number(m[1]))
+      .filter(n => Number.isFinite(n) && n <= 100);
+    return scores.some(score => score >= 85);
+  };
+
+  // 1단계: 빠른검색 (LLM 1회)
+  const handleFastSearchStart = useCallback(async () => {
+    if (isStreaming || (phase !== 'idle' && phase !== 'confirming') || !selectedTree) return;
     clearChat(claimNumber);
+    clearWeights(claimNumber);
+    setFastResult('');
+    setError(null);
+    setErrorKind(null);
+
+    const displayLabel = selectedPrompt
+      ? `빠른검색 시작 · ${selectedPrompt.name}`
+      : '빠른검색 시작';
+
+    addMessage(claimNumber, {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: '__FAST_SEARCH_START__',
+      displayLabel,
+    });
+
+    const result = await streamSearch([{ role: 'user', content: '__FAST_SEARCH_START__' }], undefined, 'fast');
+    setFastResult(result);
+    setPhase(hasHighSimilarityCandidate(result) ? 'idle' : 'fastReview');
+  }, [isStreaming, phase, selectedTree, selectedPrompt, claimNumber, selectedLLM,
+      clearChat, clearWeights, addMessage, streamSearch, setError]);
+
+  // 정밀검색: 가중치 분석 후 빠른검색 결과를 재사용해 검색
+  const handlePreciseSearchStart = useCallback(async () => {
+    if (isStreaming || !selectedTree) return;
+    setError(null);
+    setErrorKind(null);
+    setPhase('weighting');
+    try {
+      setErrorKind('weight');
+      const res = await fetch('/api/patent/weight', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          claimNumber,
+          parts: selectedTree.root.parts,
+          dependentClaimText: selectedDependent?.rawText,
+          llmType: selectedLLM ?? 'claude',
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const { weights: newWeights } = await res.json();
+      setWeights(claimNumber, newWeights);
+
+      const displayLabel = '정밀검색 시작 (빠른검색 결과 재사용)';
+      addMessage(claimNumber, {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: '__PRECISE_SEARCH_START__',
+        displayLabel,
+      });
+
+      setPhase('idle');
+      await streamSearch(
+        [{ role: 'user', content: '__PRECISE_SEARCH_START__' }],
+        newWeights,
+        'precise',
+        fastResult
+      );
+    } catch (e) {
+      setError(String(e));
+      setPhase('idle');
+    }
+  }, [isStreaming, phase, selectedTree, selectedDependent, claimNumber, selectedLLM,
+      fastResult, setWeights, addMessage, streamSearch, setError]);
+
+  // 2단계: 가중치 확정 후 검색
+  const handleSearchWithWeights = useCallback(async () => {
+    if (!selectedTree || weights.length === 0) return;
+    setPhase('idle');
 
     const displayLabel = selectedPrompt
       ? `선행발명 검색 시작 — ${selectedPrompt.name}`
-      : '선행발명 검색 시작 (기본 프롬프트)';
+      : '선행발명 검색 시작 (가중치 분석 완료)';
 
     const userMsg: PatentChatMessage = {
       id: crypto.randomUUID(),
@@ -126,9 +244,10 @@ export function ClaimDetail() {
     };
     addMessage(claimNumber, userMsg);
 
-    await streamSearch([{ role: 'user', content: '__SEARCH_START__' }]);
-  }, [isStreaming, selectedTree, clearChat, claimNumber, selectedPrompt, addMessage, streamSearch]);
+    await streamSearch([{ role: 'user', content: '__SEARCH_START__' }], weights, 'precise', fastResult);
+  }, [selectedTree, weights, selectedPrompt, claimNumber, addMessage, streamSearch]);
 
+  // 멀티턴 추가 질문
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text || isStreaming) return;
@@ -140,10 +259,9 @@ export function ClaimDetail() {
       content: text,
     };
     addMessage(claimNumber, userMsg);
-
     const history = getHistoryForSend(text);
-    await streamSearch(history);
-  }, [input, isStreaming, addMessage, claimNumber, getHistoryForSend, streamSearch]);
+    await streamSearch(history, undefined, 'precise', fastResult);
+  }, [input, isStreaming, addMessage, claimNumber, getHistoryForSend, streamSearch, fastResult]);
 
   const handleLLMAnalyze = useCallback(async () => {
     if (!selectedTree) return;
@@ -172,7 +290,6 @@ export function ClaimDetail() {
     }
   };
 
-  // ── 독립항 미선택 시 안내 ────────────────────────────────────
   if (!selectedTree) {
     return (
       <div className="flex items-center justify-center h-full text-sm text-gray-400">
@@ -182,6 +299,7 @@ export function ClaimDetail() {
   }
 
   const { root } = selectedTree;
+  const isActive = (phase !== 'idle' && phase !== 'fastReview') || isStreaming;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -201,7 +319,7 @@ export function ClaimDetail() {
         {root.needsLLM && (
           <button
             onClick={handleLLMAnalyze}
-            disabled={isAnalyzing}
+            disabled={isAnalyzing || isActive}
             className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg
               bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50 transition-colors"
           >
@@ -210,26 +328,50 @@ export function ClaimDetail() {
           </button>
         )}
 
-        <PromptDropdown
-          prompts={prompts}
-          selectedId={searchPromptId}
-          onSelect={setSearchPromptId}
-          onOpenManager={openManager}
-        />
+        {/* 프롬프트 드롭다운은 가중치 확정 전에만 표시 */}
+        {phase !== 'confirming' && (
+          <PromptDropdown
+            prompts={prompts}
+            selectedId={searchPromptId}
+            onSelect={setSearchPromptId}
+            onOpenManager={openManager}
+          />
+        )}
 
-        <button
-          onClick={handleSearchStart}
-          disabled={isStreaming}
-          className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg
-            bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50 transition-colors"
-        >
-          <Search size={11} />
-          {messages.length > 0 ? '재검색' : '검색 시작'}
-        </button>
-
-        {messages.length > 0 && (
+        {/* 검색 시작 / 재검색 버튼 */}
+        {phase === 'idle' && (
           <button
-            onClick={() => clearChat(claimNumber)}
+            onClick={handleFastSearchStart}
+            disabled={isStreaming}
+            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg
+              bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50 transition-colors"
+          >
+            <Scale size={11} />
+            {messages.length > 0 ? '빠른 재검색' : '빠른검색'}
+          </button>
+        )}
+
+        {phase === 'weighting' && (
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-violet-600">
+            <Loader2 size={12} className="animate-spin" />
+            가중치 분석 중…
+          </div>
+        )}
+
+        {phase === 'confirming' && (
+          <button
+            onClick={handleFastSearchStart}
+            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg
+              border border-gray-300 bg-white hover:bg-gray-50 text-gray-600 transition-colors"
+          >
+            <RotateCcw size={11} />
+            빠른 재검색
+          </button>
+        )}
+
+        {messages.length > 0 && phase === 'idle' && (
+          <button
+            onClick={() => { clearChat(claimNumber); clearWeights(claimNumber); }}
             className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-200 transition-colors"
             title="대화 초기화"
           >
@@ -257,6 +399,27 @@ export function ClaimDetail() {
         )}
       </div>
 
+      {/* ── 목적 및 효과 ─────────────────────────────────────── */}
+      {purposeAndEffect && (
+        <div className="shrink-0 border-b border-gray-100">
+          <button
+            onClick={() => setPurposeOpen(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-2 text-xs
+              text-gray-500 hover:bg-gray-50 transition-colors"
+          >
+            <span className="font-medium text-emerald-700">목적 및 효과</span>
+            {purposeOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+          </button>
+          {purposeOpen && (
+            <div className="px-4 pb-3">
+              <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">
+                {purposeAndEffect}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── 종속항 원문 ──────────────────────────────────────── */}
       {selectedDependent && (
         <div className="shrink-0 border-b border-gray-100 px-4 py-3 bg-indigo-50/40">
@@ -274,30 +437,113 @@ export function ClaimDetail() {
         </div>
       )}
 
-      {/* ── 채팅 메시지 영역 ─────────────────────────────────── */}
+      {/* ── 채팅 / 가중치 영역 ───────────────────────────────── */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-        {messages.length === 0 && (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center text-sm text-gray-400 space-y-1">
-              <Search size={24} className="mx-auto text-gray-300 mb-2" />
-              <p>위 <span className="text-violet-600 font-medium">검색 시작</span> 버튼을 눌러</p>
-              <p>LLM과 대화를 시작하세요.</p>
-              <p className="text-xs text-gray-300 mt-2">
-                PDF 전문을 참고하여 청구항을 분석하고<br />
-                선행발명을 찾아드립니다.
+
+        {/* 에러 표시 */}
+        {error && phase === 'idle' && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 flex items-start gap-2">
+            <AlertTriangle size={14} className="shrink-0 mt-0.5 text-red-500" />
+            <div>
+              <p className="font-semibold mb-0.5">
+                {errorKind === 'search' ? '선행발명 검색 오류' : '가중치 분석 오류'}
+              </p>
+              <p className="text-red-600 break-all">{error}</p>
+            </div>
+          </div>
+        )}
+
+        {/* 가중치 분석 중 스피너 */}
+        {phase === 'weighting' && (
+          <div className="flex flex-col items-center justify-center h-full gap-3 text-violet-600">
+            <Loader2 size={28} className="animate-spin" />
+            <div className="text-center">
+              <p className="text-sm font-medium">구성 가중치 분석 중</p>
+              <p className="text-xs text-gray-400 mt-1">
+                {selectedLLM === 'gemini' ? 'Gemini Flash' : selectedLLM === 'gpt' ? 'GPT-4o Mini' : 'Claude Haiku'}
+                가 각 구성의 핵심도를 판단하고 있습니다
               </p>
             </div>
           </div>
         )}
 
+        {/* 가중치 확인 테이블 */}
+        {phase === 'confirming' && weights.length > 0 && (
+          <WeightTable
+            weights={weights}
+            claimNumber={claimNumber}
+            llmName={selectedLLM === 'gemini' ? 'Gemini Flash' : selectedLLM === 'gpt' ? 'GPT-4o Mini' : 'Claude Haiku'}
+            onWeightChange={(i, w) => updateWeight(claimNumber, i, w)}
+            onSearch={handleSearchWithWeights}
+          />
+        )}
+
+        {/* 가중치가 비어있는 경우 */}
+        {phase === 'confirming' && weights.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-400">
+            <AlertTriangle size={24} className="text-amber-400" />
+            <div className="text-center">
+              <p className="text-sm font-medium text-gray-600">가중치를 분석하지 못했습니다</p>
+              <p className="text-xs mt-1">청구항 구성이 분리되지 않았을 수 있습니다.<br/>
+                LLM 구성 분석 후 다시 시도하거나, 재분석을 눌러보세요.</p>
+            </div>
+          </div>
+        )}
+
+        {/* 빈 상태 안내 */}
+        {phase === 'idle' && messages.length === 0 && (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center text-sm text-gray-400 space-y-1">
+              <Search size={24} className="mx-auto text-gray-300 mb-2" />
+              <p>위 <span className="text-violet-600 font-medium">검색 시작</span> 버튼을 눌러</p>
+              <p>선행발명 검색을 시작하세요.</p>
+              <p className="text-xs text-gray-300 mt-2">
+                경량 모델이 구성 가중치를 먼저 분석한 뒤<br />
+                강력한 모델이 선행발명을 검색합니다.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* 채팅 메시지 */}
         {messages.map(msg => (
           <ChatBubble key={msg.id} message={msg} />
         ))}
+
+        {phase === 'fastReview' && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-900">
+            <div className="flex items-start gap-2">
+              <AlertTriangle size={16} className="shrink-0 mt-0.5 text-amber-500" />
+              <div className="flex-1">
+                <p className="font-semibold">85% 이상 유사 후보가 뚜렷하게 검색되지 않았습니다.</p>
+                <p className="text-xs text-amber-700 mt-1 leading-relaxed">
+                  빠른검색 결과를 캐시로 재사용해서 PDF/참고자료/가중치 분석까지 포함한 정밀검색을 수행할까요?
+                </p>
+                <div className="flex gap-2 mt-3">
+                  <button
+                    onClick={handlePreciseSearchStart}
+                    disabled={isStreaming}
+                    className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold disabled:opacity-50"
+                  >
+                    정밀검색 수행
+                  </button>
+                  <button
+                    onClick={() => setPhase('idle')}
+                    disabled={isStreaming}
+                    className="px-3 py-1.5 rounded-lg border border-amber-300 bg-white hover:bg-amber-50 text-amber-700 text-xs font-medium disabled:opacity-50"
+                  >
+                    빠른검색 결과로 충분
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
 
-      {/* ── 입력창 ───────────────────────────────────────────── */}
-      {messages.length > 0 && (
+      {/* ── 입력창 (멀티턴 추가 질문) ───────────────────────── */}
+      {messages.length > 0 && phase === 'idle' && (
         <div className="shrink-0 border-t border-gray-200 px-4 py-3">
           <div className="flex gap-2 items-end">
             <textarea
@@ -327,6 +573,141 @@ export function ClaimDetail() {
         </div>
       )}
     </div>
+  );
+}
+
+// ── 가중치 확인 테이블 ───────────────────────────────────────────
+function WeightTable({
+  weights, claimNumber, llmName, onWeightChange, onSearch,
+}: {
+  weights: WeightItem[];
+  claimNumber: number;
+  llmName: string;
+  onWeightChange: (index: number, weight: '핵심' | '보조' | '관용') => void;
+  onSearch: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-violet-200 bg-violet-50/40 overflow-hidden">
+      {/* 헤더 */}
+      <div className="flex items-center justify-between px-4 py-2.5 bg-violet-100/60 border-b border-violet-200">
+        <div className="flex items-center gap-2">
+          <Scale size={13} className="text-violet-600" />
+          <span className="text-xs font-semibold text-violet-700">구성 가중치 분석 결과</span>
+          <span className="text-xs text-violet-400">({llmName})</span>
+        </div>
+        <span className="text-xs text-violet-500">필요 시 가중치를 수정하세요</span>
+      </div>
+
+      {/* 테이블 */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-violet-100">
+              <th className="px-3 py-2 text-left text-gray-500 font-medium w-12">구성</th>
+              <th className="px-3 py-2 text-left text-gray-500 font-medium">내용</th>
+              <th className="px-3 py-2 text-left text-gray-500 font-medium w-32">가중치</th>
+              <th className="px-3 py-2 text-left text-gray-500 font-medium">판단 이유</th>
+            </tr>
+          </thead>
+          <tbody>
+            {/* 독립항 구성 */}
+            {weights.filter(w => !w.isDep).map((item, i) => (
+              <WeightRow
+                key={i}
+                item={item}
+                globalIndex={weights.indexOf(item)}
+                onWeightChange={onWeightChange}
+              />
+            ))}
+            {/* 종속항 고유 구성 — 구분선 + 강조 */}
+            {weights.some(w => w.isDep) && (
+              <>
+                <tr>
+                  <td colSpan={4} className="px-3 py-1.5 bg-indigo-50 border-y border-indigo-200">
+                    <span className="text-xs font-semibold text-indigo-600">
+                      종속항 고유 구성 — 검색 핵심 타겟
+                    </span>
+                  </td>
+                </tr>
+                {weights.filter(w => w.isDep).map((item) => (
+                  <WeightRow
+                    key={`dep-${weights.indexOf(item)}`}
+                    item={item}
+                    globalIndex={weights.indexOf(item)}
+                    onWeightChange={onWeightChange}
+                    highlight
+                  />
+                ))}
+              </>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* 검색 버튼 */}
+      <div className="px-4 py-3 border-t border-violet-100 flex justify-end">
+        <button
+          onClick={onSearch}
+          className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg
+            bg-violet-600 hover:bg-violet-700 text-white transition-colors shadow-sm"
+        >
+          <Search size={12} />
+          이 가중치로 검색 시작
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── 가중치 행 ───────────────────────────────────────────────
+function WeightRow({
+  item, globalIndex, onWeightChange, highlight = false,
+}: {
+  item: WeightItem;
+  globalIndex: number;
+  onWeightChange: (index: number, weight: '핵심' | '보조' | '관용') => void;
+  highlight?: boolean;
+}) {
+  return (
+    <tr className={cn(
+      'border-b last:border-0',
+      highlight
+        ? 'bg-indigo-50/60 border-indigo-100 hover:bg-indigo-50'
+        : 'border-violet-50 hover:bg-violet-50/60'
+    )}>
+      <td className="px-3 py-2 text-center">
+        <span className={cn(
+          'font-mono font-bold',
+          highlight ? 'text-indigo-600' : 'text-violet-600'
+        )}>
+          {item.label ? `(${item.label})` : '—'}
+        </span>
+      </td>
+      <td className={cn(
+        'px-3 py-2 leading-relaxed max-w-[240px]',
+        highlight ? 'text-indigo-800 font-medium' : 'text-gray-700'
+      )}>
+        {item.text}
+      </td>
+      <td className="px-3 py-2">
+        <select
+          value={item.weight}
+          onChange={e => onWeightChange(globalIndex, e.target.value as '핵심' | '보조' | '관용')}
+          className={cn(
+            'text-xs font-medium rounded-md border px-2 py-1 appearance-none cursor-pointer',
+            'focus:outline-none focus:ring-1 focus:ring-violet-400',
+            WEIGHT_COLOR[item.weight]
+          )}
+        >
+          <option value="핵심">★★★ 핵심</option>
+          <option value="보조">★★☆ 보조</option>
+          <option value="관용">★☆☆ 관용</option>
+        </select>
+      </td>
+      <td className="px-3 py-2 text-gray-500 leading-relaxed">
+        {item.reason}
+      </td>
+    </tr>
   );
 }
 

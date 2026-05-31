@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronRight, ChevronDown, GitBranch, Equal, Layers, AlertCircle, CalendarClock } from 'lucide-react';
+import { ChevronRight, ChevronDown, GitBranch, Equal, Layers, AlertCircle, CalendarClock, FileText } from 'lucide-react';
 import { usePatentStore } from '../../store/patentStore';
 import { ClaimTree, CompareResult, EquivalenceGroup, DependentEquivalence, EquivType, ParsedDependentClaim } from '../../types/patent';
 import { cn } from '../../lib/utils';
@@ -29,8 +29,22 @@ function findDepGroup(num: number, depEquivs: DependentEquivalence[]): Dependent
   return depEquivs.find(g => g.claimNumbers.includes(num)) ?? null;
 }
 
+// 부모 번호의 직접 자녀를 반환 — refersTo 중 validNums에 속하는 첫 번호가 parentNum인 종속항
+function getDirectChildren(
+  parentNum: number,
+  deps: ParsedDependentClaim[],
+  validNums: Set<number>
+): ParsedDependentClaim[] {
+  return deps
+    .filter(d => {
+      const primary = d.refersTo.find(n => validNums.has(n));
+      return primary === parentNum;
+    })
+    .sort((a, b) => a.number - b.number);
+}
+
 export function ClaimTreePanel() {
-  const { result, selectedTree, selectTree, selectedDependent, selectDependent, compareResult, priorityDate, priorityDateLabel } = usePatentStore();
+  const { result, fileName, selectedTree, selectTree, selectedDependent, selectDependent, compareResult, priorityDate, priorityDateLabel } = usePatentStore();
   if (!result) return null;
 
   const groups = compareResult?.equivalenceGroups ?? [];
@@ -40,6 +54,14 @@ export function ClaimTreePanel() {
     <div className="flex flex-col h-full border-r border-gray-200">
       {/* 헤더 */}
       <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 shrink-0">
+        {/* 파일명 */}
+        {fileName && (
+          <div className="flex items-center gap-1.5 mb-2 px-2 py-1 bg-white border border-gray-200 rounded-lg">
+            <FileText size={11} className="text-violet-400 shrink-0" />
+            <span className="text-xs text-gray-600 truncate font-medium">{fileName}</span>
+          </div>
+        )}
+
         <div className="flex items-center gap-2">
           <GitBranch size={14} className="text-violet-500" />
           <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">청구항 트리</span>
@@ -81,7 +103,7 @@ export function ClaimTreePanel() {
         )}
       </div>
 
-      {/* 독립항 목록 — 스크롤 없이 전부 표시 */}
+      {/* 독립항 목록 */}
       <div className="flex-1 overflow-y-auto py-1">
         {result.trees.map(tree => (
           <TreeNode
@@ -117,6 +139,10 @@ function TreeNode({
   const color = group ? (GROUP_PALETTE[group.groupId] ?? GROUP_PALETTE[1]) : null;
   const hasDeps = dependents.length > 0;
 
+  // 계층 탐색에 사용할 유효 번호 집합 (루트 + 모든 종속항)
+  const validNums = new Set([root.number, ...dependents.map(d => d.number)]);
+  const rootChildren = getDirectChildren(root.number, dependents, validNums);
+
   return (
     <div>
       {/* 독립항 행 */}
@@ -126,7 +152,6 @@ function TreeNode({
           ? color ? cn(color.bg, color.border) : 'bg-violet-50 border-violet-500'
           : color ? cn(color.bg, 'border-transparent') : 'border-transparent'
       )}>
-        {/* 선택 버튼 (클릭 → 우측 상세 패널) */}
         <button
           onClick={() => onSelect(tree)}
           className={cn(
@@ -134,7 +159,6 @@ function TreeNode({
             isSelected ? '' : 'hover:bg-black/5'
           )}
         >
-          {/* 번호 뱃지 */}
           <div className="flex items-center gap-1 shrink-0 mt-0.5">
             {color && <span className={cn('w-2 h-2 rounded-full', color.dot)} />}
             <span className={cn(
@@ -158,7 +182,7 @@ function TreeNode({
               {group && <EquivBadge type={group.type} colorText={color!.text} />}
             </div>
             <p className="text-xs text-gray-400 truncate mt-0.5">
-              {root.rawText.slice(0, 38)}…
+              {root.rawText.slice(0, 40)}…
             </p>
             {group?.type === 'similar' && group.diffComponents && group.diffComponents.length > 0 && (
               <div className="mt-1 flex items-center gap-1">
@@ -171,7 +195,6 @@ function TreeNode({
           </div>
         </button>
 
-        {/* 종속항 토글 버튼 */}
         {hasDeps && (
           <button
             onClick={() => setDepsOpen(v => !v)}
@@ -192,48 +215,89 @@ function TreeNode({
         )}
       </div>
 
-      {/* 종속항 목록 — 접기/펼치기 */}
+      {/* 계층적 종속항 트리 */}
       {hasDeps && depsOpen && (
-        <div className="ml-4 border-l-2 border-gray-200 py-0.5">
-          {dependents.map(dep => {
-            const depGroup = findDepGroup(dep.number, depEquivs);
-            const depColor = depGroup ? (GROUP_PALETTE[depGroup.groupId] ?? GROUP_PALETTE[1]) : null;
-            const isDepSelected = selectedDepNumber === dep.number;
+        <div className="ml-3 border-l-2 border-gray-200 py-0.5">
+          {rootChildren.map(dep => (
+            <DepNode
+              key={dep.number}
+              dep={dep}
+              allDeps={dependents}
+              validNums={validNums}
+              selectedDepNumber={selectedDepNumber}
+              onSelectDep={onSelectDep}
+              depEquivs={depEquivs}
+              depth={0}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
-            return (
-              <button
-                key={dep.number}
-                onClick={() => onSelectDep(dep)}
-                className={cn(
-                  'w-full flex items-center gap-2 px-3 py-1.5 mx-1 rounded-sm text-left transition-colors',
-                  isDepSelected
-                    ? 'bg-violet-100 border border-violet-300'
-                    : depColor ? depColor.bg : 'hover:bg-gray-50'
-                )}
-              >
-                <div className="flex items-center gap-1 shrink-0">
-                  {depColor && (
-                    <span className={cn('w-1.5 h-1.5 rounded-full', depColor.dot)} />
-                  )}
-                  <span className={cn(
-                    'text-xs px-1.5 py-0.5 rounded',
-                    isDepSelected ? 'bg-violet-200 text-violet-700 font-bold' : 'bg-gray-100 text-gray-500'
-                  )}>
-                    {dep.number}
-                  </span>
-                </div>
-                <p className={cn(
-                  'text-xs truncate flex-1',
-                  isDepSelected ? 'text-violet-600 font-medium' : 'text-gray-400'
-                )}>
-                  ↳ 제{dep.refersTo.join('·')}항 인용
-                </p>
-                {depGroup && (
-                  <span className={cn('text-xs font-medium shrink-0', depColor!.text)}>≡</span>
-                )}
-              </button>
-            );
-          })}
+function DepNode({
+  dep, allDeps, validNums, selectedDepNumber, onSelectDep, depEquivs, depth,
+}: {
+  dep: ParsedDependentClaim;
+  allDeps: ParsedDependentClaim[];
+  validNums: Set<number>;
+  selectedDepNumber: number | null;
+  onSelectDep: (dep: ParsedDependentClaim) => void;
+  depEquivs: DependentEquivalence[];
+  depth: number;
+}) {
+  const children = getDirectChildren(dep.number, allDeps, validNums);
+  const depGroup = findDepGroup(dep.number, depEquivs);
+  const depColor = depGroup ? (GROUP_PALETTE[depGroup.groupId] ?? GROUP_PALETTE[1]) : null;
+  const isDepSelected = selectedDepNumber === dep.number;
+
+  return (
+    <div>
+      <button
+        onClick={() => onSelectDep(dep)}
+        className={cn(
+          'w-full flex items-center gap-2 px-3 py-1.5 mx-1 rounded-sm text-left transition-colors',
+          isDepSelected
+            ? 'bg-violet-100 border border-violet-300'
+            : depColor ? depColor.bg : 'hover:bg-gray-50'
+        )}
+      >
+        <div className="flex items-center gap-1 shrink-0">
+          {depColor && <span className={cn('w-1.5 h-1.5 rounded-full', depColor.dot)} />}
+          <span className={cn(
+            'text-xs px-1.5 py-0.5 rounded',
+            isDepSelected ? 'bg-violet-200 text-violet-700 font-bold' : 'bg-gray-100 text-gray-500'
+          )}>
+            {dep.number}
+          </span>
+        </div>
+        <p className={cn(
+          'text-xs truncate flex-1',
+          isDepSelected ? 'text-violet-600 font-medium' : 'text-gray-400'
+        )}>
+          ↳ 제{dep.refersTo.join('·')}항 인용
+        </p>
+        {depGroup && (
+          <span className={cn('text-xs font-medium shrink-0', depColor!.text)}>≡</span>
+        )}
+      </button>
+
+      {/* 이 종속항의 자녀 종속항 (재귀) */}
+      {children.length > 0 && (
+        <div className="ml-3 border-l border-gray-200 py-0.5">
+          {children.map(child => (
+            <DepNode
+              key={child.number}
+              dep={child}
+              allDeps={allDeps}
+              validNums={validNums}
+              selectedDepNumber={selectedDepNumber}
+              onSelectDep={onSelectDep}
+              depEquivs={depEquivs}
+              depth={depth + 1}
+            />
+          ))}
         </div>
       )}
     </div>

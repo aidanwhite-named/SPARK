@@ -8,7 +8,6 @@ const LLM_META: Record<LLMType, { label: string; dot: string; defaultModels: str
   claude: {
     label: 'Claude',
     dot: 'bg-orange-400',
-    // haiku를 기본 모델로 — 토큰 비용 절약
     defaultModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'claude-opus-4-7'],
   },
   gemini: {
@@ -22,6 +21,14 @@ const LLM_META: Record<LLMType, { label: string; dot: string; defaultModels: str
     defaultModels: ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo', 'o1-mini', 'o1-preview'],
   },
 };
+
+// 모델명 축약: "claude-sonnet-4-6" → "sonnet-4-6"
+function shortModel(model: string): string {
+  return model
+    .replace(/^claude-/, '')
+    .replace(/^gemini-/, '')
+    .replace(/-\d{8}$/, ''); // 날짜 suffix 제거 (haiku-4-5-20251001 → haiku-4-5)
+}
 
 export function LLMSelector() {
   const { selectedLLM, selectedModel, llmInfos, setLLM, setModel } = useSettingsStore();
@@ -43,7 +50,7 @@ export function LLMSelector() {
     const fromServer = getInfo(type)?.models;
     return fromServer && fromServer.length > 0 ? fromServer : LLM_META[type].defaultModels;
   };
-  // null=확인중, true=연결됨, false=미설치/오프라인
+  // null=확인중, true=연결됨, false=오프라인
   const availability = (type: LLMType): boolean | null => {
     if (llmInfos.length === 0) return null;
     const info = getInfo(type);
@@ -51,7 +58,6 @@ export function LLMSelector() {
   };
 
   const handleLLMClick = (type: LLMType) => {
-    if (availability(type) === false) return;
     if (selectedLLM !== type) {
       setLLM(type);
       setModel(undefined);
@@ -64,12 +70,10 @@ export function LLMSelector() {
     setOpenMenu(null);
   };
 
-  const currentMeta = LLM_META[selectedLLM];
-  const currentModel = selectedModel ?? getModels(selectedLLM)[0] ?? '기본 모델';
+  const currentModel = selectedModel ?? getModels(selectedLLM)[0] ?? '';
 
   return (
-    // relative 필수 — 드롭다운이 이 컨테이너 기준으로 절대 위치 잡음
-    <div className="relative flex items-center gap-2" ref={menuRef}>
+    <div className="relative flex items-center gap-1" ref={menuRef}>
       {/* LLM 탭들 */}
       <div className="flex gap-1 p-1 bg-gray-100 rounded-lg border border-gray-200">
         {(Object.keys(LLM_META) as LLMType[]).map((type) => {
@@ -82,11 +86,9 @@ export function LLMSelector() {
           return (
             <button
               key={type}
-              onClick={() => !unavailable && handleLLMClick(type)}
+              onClick={() => handleLLMClick(type)}
               title={
-                unavailable
-                  ? `${meta.label} CLI가 설치되지 않았습니다`
-                  : checking
+                checking
                   ? `${meta.label} — 연결 확인 중`
                   : `${meta.label} 모델 선택`
               }
@@ -95,26 +97,36 @@ export function LLMSelector() {
                 isSelected
                   ? 'bg-white shadow-sm text-gray-900 border border-gray-200'
                   : 'text-gray-500 hover:text-gray-700 hover:bg-white/60',
-                unavailable && 'opacity-40 cursor-not-allowed'
               )}
             >
-              <span className={cn('w-1.5 h-1.5 rounded-full', meta.dot)} />
-              {meta.label}
+              <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', meta.dot)} />
+
+              <span className="flex flex-col items-start leading-tight">
+                <span>{meta.label}</span>
+                {/* 선택된 탭에 현재 모델명 표시 */}
+                {isSelected && currentModel && (
+                  <span className="text-[9px] text-gray-400 font-normal max-w-[80px] truncate">
+                    {shortModel(currentModel)}
+                  </span>
+                )}
+              </span>
+
               {isSelected && (
                 <ChevronDown
                   size={11}
                   className={cn(
-                    'ml-0.5 text-gray-400 transition-transform',
+                    'ml-0.5 text-gray-400 transition-transform flex-shrink-0',
                     openMenu === type && 'rotate-180'
                   )}
                 />
               )}
+
               {/* 연결 상태 아이콘 (비선택 상태에서만) */}
               {!isSelected && avail === true && (
                 <Wifi size={9} className="text-green-400 ml-0.5" />
               )}
               {!isSelected && unavailable && (
-                <WifiOff size={9} className="text-red-400 ml-0.5" />
+                <WifiOff size={9} className="text-red-400 ml-0.5 opacity-60" />
               )}
               {!isSelected && checking && (
                 <Loader2 size={9} className="text-gray-300 ml-0.5 animate-spin" />
@@ -123,18 +135,6 @@ export function LLMSelector() {
           );
         })}
       </div>
-
-      {/* 현재 선택 모델 뱃지 */}
-      <button
-        onClick={() => availability(selectedLLM) !== false && handleLLMClick(selectedLLM)}
-        className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 bg-gray-50
-          border border-gray-200 rounded-md hover:bg-white hover:border-gray-300 transition-all"
-        title="모델 변경"
-      >
-        <span className={cn('w-1.5 h-1.5 rounded-full', currentMeta.dot)} />
-        <span className="max-w-[160px] truncate">{currentModel}</span>
-        <ChevronDown size={11} className={cn('text-gray-400 transition-transform', openMenu === selectedLLM && 'rotate-180')} />
-      </button>
 
       {/* 모델 드롭다운 메뉴 */}
       {openMenu !== null && (
@@ -146,26 +146,12 @@ export function LLMSelector() {
           <div className="px-3 py-1.5 border-b border-gray-100 mb-1">
             <div className="flex items-center gap-2">
               <span className={cn('w-2 h-2 rounded-full', LLM_META[openMenu].dot)} />
-              <span className="text-xs font-semibold text-gray-700">{LLM_META[openMenu].label} 모델 선택</span>
-              {/* 연결 상태 */}
-              {(() => {
-                const av = availability(openMenu);
-                if (av === true) return (
-                  <span className="ml-auto text-[10px] text-green-600 flex items-center gap-0.5">
-                    <Wifi size={9} /> 연결됨
-                  </span>
-                );
-                if (av === false) return (
-                  <span className="ml-auto text-[10px] text-red-500 flex items-center gap-0.5">
-                    <WifiOff size={9} /> 미설치
-                  </span>
-                );
-                return (
-                  <span className="ml-auto text-[10px] text-gray-400 flex items-center gap-0.5">
-                    <Loader2 size={9} className="animate-spin" /> 확인 중
-                  </span>
-                );
-              })()}
+              <span className="text-xs font-semibold text-gray-700">{LLM_META[openMenu].label} 모델</span>
+              {availability(openMenu) === true && (
+                <span className="ml-auto text-[10px] text-green-600 flex items-center gap-0.5">
+                  <Wifi size={9} /> 연결됨
+                </span>
+              )}
             </div>
           </div>
 
