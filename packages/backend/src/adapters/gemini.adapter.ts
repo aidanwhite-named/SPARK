@@ -8,8 +8,8 @@ export class GeminiAdapter extends BaseLLMAdapter {
   private executor: CLIExecutor;
 
   private readonly models = [
-    'gemini-2.5-flash',
     'gemini-2.5-pro',
+    'gemini-2.5-flash',
   ];
 
   constructor() {

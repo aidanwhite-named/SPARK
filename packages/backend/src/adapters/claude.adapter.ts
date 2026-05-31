@@ -8,9 +8,9 @@ export class ClaudeAdapter extends BaseLLMAdapter {
   private executor: CLIExecutor;
 
   private readonly models = [
-    'claude-haiku-4-5-20251001',
     'claude-sonnet-4-6',
     'claude-opus-4-7',
+    'claude-haiku-4-5-20251001',
   ];
 
   private readonly completeTimeoutMs = 45_000;

@@ -42,9 +42,9 @@ export const SEARCH_MODELS: Record<string, string> = {
 };
 
 export const FAST_SEARCH_MODELS: Record<string, string> = {
-  claude: 'claude-haiku-4-5-20251001',
-  gemini: 'gemini-2.5-flash',
-  gpt: 'gpt-4o-mini',
+  claude: 'claude-sonnet-4-6',
+  gemini: 'gemini-2.5-pro',
+  gpt: 'gpt-4o',
 };
 
 // ── 가중치 분석 타입 ────────────────────────────────────────────
@@ -126,10 +126,11 @@ export async function analyzeWeights(
   parts: ClaimPart[],
   claimNumber: number,
   llmType: string,
-  dependentClaimText?: string
+  dependentClaimText?: string,
+  selectedModel?: string
 ): Promise<WeightItem[]> {
   const adapter = adapterFactory.get((llmType as LLMType) ?? 'claude');
-  const model = WEIGHT_MODELS[llmType] ?? WEIGHT_MODELS.claude;
+  const model = selectedModel ?? WEIGHT_MODELS[llmType] ?? WEIGHT_MODELS.claude;
   const claimStructure = formatClaimStructure(parts, claimNumber);
 
   let prompt = WEIGHT_ANALYSIS_PROMPT + claimStructure;

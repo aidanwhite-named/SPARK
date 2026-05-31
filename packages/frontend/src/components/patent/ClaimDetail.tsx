@@ -34,7 +34,7 @@ export function ClaimDetail() {
     updateClaimParts, clearChat, chatHistories,
     weightResults, setWeights, updateWeight, clearWeights,
   } = usePatentStore();
-  const { selectedLLM } = useSettingsStore();
+  const { selectedLLM, selectedModel } = useSettingsStore();
   const { prompts, openManager } = usePromptStore();
   const [input, setInput] = useState('');
   const [phase, setPhase] = useState<SearchPhase>('idle');
@@ -95,6 +95,7 @@ export function ClaimDetail() {
           parts: selectedTree.root.parts,
           dependentClaimText: selectedDependent?.rawText,
           llmType: selectedLLM ?? 'claude',
+          model: selectedModel,
           pdfText: mode === 'precise' ? (pdfText ?? '').slice(0, 40000) : '',
           promptContent: searchWeights ? undefined : selectedPrompt?.content,
           messages: historyForSend,
@@ -146,7 +147,7 @@ export function ClaimDetail() {
       finalizeStreaming(claimNumber);
       return accumulated;
     }
-  }, [selectedTree, selectedDependent, claimNumber, selectedLLM, pdfText, contextText,
+  }, [selectedTree, selectedDependent, claimNumber, selectedLLM, selectedModel, pdfText, contextText,
       contextSource, selectedPrompt, startStreaming, appendStreamChunk, finalizeStreaming, setError]);
 
   const hasHighSimilarityCandidate = (content: string) => {
@@ -199,6 +200,7 @@ export function ClaimDetail() {
           parts: selectedTree.root.parts,
           dependentClaimText: selectedDependent?.rawText,
           llmType: selectedLLM ?? 'claude',
+          model: selectedModel,
         }),
       });
       if (!res.ok) throw new Error(await res.text());
@@ -224,7 +226,7 @@ export function ClaimDetail() {
       setError(String(e));
       setPhase('idle');
     }
-  }, [isStreaming, phase, selectedTree, selectedDependent, claimNumber, selectedLLM,
+  }, [isStreaming, phase, selectedTree, selectedDependent, claimNumber, selectedLLM, selectedModel,
       fastResult, setWeights, addMessage, streamSearch, setError]);
 
   // 2단계: 가중치 확정 후 검색

@@ -184,15 +184,16 @@ export async function patentRoutes(app: FastifyInstance) {
       parts: ClaimPart[];
       dependentClaimText?: string;
       llmType: string;
+      model?: string;
     };
   }>('/api/patent/weight', async (req, reply) => {
-    const { claimNumber, parts, dependentClaimText, llmType } = req.body;
+    const { claimNumber, parts, dependentClaimText, llmType, model } = req.body;
     const t0 = Date.now();
     console.log(`\n${'─'.repeat(60)}`);
     console.log(`[WEIGHT] ▶ 시작 | claim=${claimNumber} | llm=${llmType} | parts=${parts?.length}`);
     console.log(`[WEIGHT]   dep=${!!dependentClaimText}`);
     try {
-      const key = cacheKey('weight', { claimNumber, parts, dependentClaimText, llmType });
+      const key = cacheKey('weight', { claimNumber, parts, dependentClaimText, llmType, model });
       const cached = getFresh(weightCache, key);
       if (cached) {
         console.log(`[WEIGHT] cache hit | claim=${claimNumber} | llm=${llmType}`);
@@ -201,7 +202,7 @@ export async function patentRoutes(app: FastifyInstance) {
 
       let promise = weightInflight.get(key);
       if (!promise) {
-        promise = analyzeWeights(parts, claimNumber, llmType, dependentClaimText);
+        promise = analyzeWeights(parts, claimNumber, llmType, dependentClaimText, model);
         weightInflight.set(key, promise);
       }
 
@@ -222,6 +223,7 @@ export async function patentRoutes(app: FastifyInstance) {
       parts: ClaimPart[];
       dependentClaimText?: string;
       llmType: string;
+      model?: string;
       pdfText?: string;
       promptContent?: string;
       messages: ChatMessage[];
@@ -238,6 +240,7 @@ export async function patentRoutes(app: FastifyInstance) {
       claimNumber, parts, dependentClaimText, llmType, pdfText, promptContent,
       messages, contextText, contextSource, priorityDate, priorityDateLabel, weights,
       mode = 'precise', fastResult,
+      model,
     } = req.body;
 
     const t0 = Date.now();
@@ -312,9 +315,9 @@ export async function patentRoutes(app: FastifyInstance) {
       console.log(`[SEARCH]   fullPrompt built in ${Date.now() - tPrompt}ms | length=${fullPrompt.length} bytes`);
 
       // 검색에는 더 강력한 모델 사용
-      const searchModel = mode === 'fast'
+      const searchModel = model ?? (mode === 'fast'
         ? (FAST_SEARCH_MODELS[llmType] ?? FAST_SEARCH_MODELS.claude)
-        : (SEARCH_MODELS[llmType] ?? SEARCH_MODELS.claude);
+        : (SEARCH_MODELS[llmType] ?? SEARCH_MODELS.claude));
       const searchKey = cacheKey('search', { mode, llmType, searchModel, fullPrompt });
       const cached = getFresh(searchCache, searchKey);
       if (cached) {
