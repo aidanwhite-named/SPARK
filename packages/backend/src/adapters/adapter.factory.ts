@@ -6,7 +6,6 @@
 import { BaseLLMAdapter, LLMType } from './base.adapter.js';
 import { ClaudeAdapter } from './claude.adapter.js';
 import { GeminiAdapter } from './gemini.adapter.js';
-import { GPTAdapter } from './gpt.adapter.js';
 
 class AdapterFactory {
   private adapters: Map<LLMType, BaseLLMAdapter> = new Map();
@@ -15,7 +14,6 @@ class AdapterFactory {
     // 싱글톤 인스턴스 — 어댑터는 한 번만 생성
     this.adapters.set('claude', new ClaudeAdapter());
     this.adapters.set('gemini', new GeminiAdapter());
-    this.adapters.set('gpt', new GPTAdapter());
   }
 
   get(llmType: LLMType): BaseLLMAdapter {

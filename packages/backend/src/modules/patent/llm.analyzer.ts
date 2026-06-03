@@ -30,21 +30,18 @@ JSON만 응답 (다른 텍스트 없이):
 // 가중치 판단: 경량 모델 (빠른 분류)
 export const WEIGHT_MODELS: Record<string, string> = {
   claude: 'claude-haiku-4-5-20251001',
-  gemini: 'gemini-2.5-flash',
-  gpt: 'gpt-4o-mini',
+  gemini: 'gemini-3.1-flash-lite',
 };
 
 // 선행발명 검색: 웹검색이 필요하므로 더 강력한 모델
 export const SEARCH_MODELS: Record<string, string> = {
-  claude: 'claude-sonnet-4-6',
-  gemini: 'gemini-2.5-pro',
-  gpt: 'gpt-4o',
+  claude: 'claude-haiku-4-5-20251001',
+  gemini: 'gemini-3.5-flash',
 };
 
 export const FAST_SEARCH_MODELS: Record<string, string> = {
-  claude: 'claude-sonnet-4-6',
-  gemini: 'gemini-2.5-pro',
-  gpt: 'gpt-4o',
+  claude: 'claude-haiku-4-5-20251001',
+  gemini: 'gemini-3.5-flash',
 };
 
 // ── 가중치 분석 타입 ────────────────────────────────────────────

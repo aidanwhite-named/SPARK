@@ -8,17 +8,12 @@ const LLM_META: Record<LLMType, { label: string; dot: string; defaultModels: str
   claude: {
     label: 'Claude',
     dot: 'bg-orange-400',
-    defaultModels: ['claude-sonnet-4-6', 'claude-opus-4-7', 'claude-haiku-4-5-20251001'],
+    defaultModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'claude-opus-4-7'],
   },
   gemini: {
     label: 'Gemini',
     dot: 'bg-blue-500',
-    defaultModels: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash'],
-  },
-  gpt: {
-    label: 'GPT',
-    dot: 'bg-green-500',
-    defaultModels: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1-mini', 'o1-preview'],
+    defaultModels: ['gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'],
   },
 };
 

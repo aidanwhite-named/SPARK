@@ -4,7 +4,7 @@ import { adapterFactory } from '../adapters/adapter.factory.js';
 import { LLMType } from '../adapters/base.adapter.js';
 
 const ChatRequestSchema = z.object({
-  llmType: z.enum(['claude', 'gemini', 'gpt']),
+  llmType: z.enum(['claude', 'gemini']),
   model: z.string().optional(),
   promptContent: z.string().optional(), // 선택된 프롬프트 내용
   userInput: z.string().min(1),

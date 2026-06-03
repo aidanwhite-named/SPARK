@@ -28,7 +28,6 @@ function fetchLLMAvailability(setLLMInfos: (infos: LLMInfo[]) => void) {
   const offlineState: LLMInfo[] = [
     { type: 'claude', name: 'Claude', models: [], available: false },
     { type: 'gemini', name: 'Gemini', models: [], available: false },
-    { type: 'gpt',    name: 'GPT',    models: [], available: false },
   ];
 
   const attempt = (): Promise<LLMInfo[]> => {

@@ -174,11 +174,13 @@ export const usePatentStore = create<PatentState>((set, get) => ({
   finalizeStreaming: (claimNumber) =>
     set(s => {
       const msgs = s.chatHistories[claimNumber] ?? [];
-      const updated = msgs.map(m =>
-        m.id === '__streaming__'
-          ? { ...m, id: crypto.randomUUID(), isStreaming: false }
-          : m
-      );
+      const updated = msgs
+        .map(m =>
+          m.id === '__streaming__'
+            ? { ...m, id: crypto.randomUUID(), isStreaming: false }
+            : m
+        )
+        .filter(m => m.role === 'user' || m.content.trim() !== '');
       return {
         streamingClaimNumber: null,
         chatHistories: { ...s.chatHistories, [claimNumber]: updated },

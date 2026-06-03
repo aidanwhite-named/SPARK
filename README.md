@@ -1,7 +1,7 @@
 # ⚡ SPARK
 
 > **S**mart **P**rompt **A**gent **R**esearch **K**it  
-> Claude · Gemini · GPT를 하나의 인터페이스에서 — 특허 선행발명 검색 특화 AI 워크스페이스
+> Claude · Gemini를 하나의 인터페이스에서 — 특허 선행발명 검색 특화 AI 워크스페이스
 
 ![version](https://img.shields.io/badge/version-1.0.0-violet)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue)
@@ -14,7 +14,7 @@
 ## 주요 기능
 
 ### AI 채팅
-- Claude / Gemini / GPT 멀티 LLM 지원
+- Claude / Gemini 멀티 LLM 지원
 - SSE 스트리밍 응답 (실시간 출력)
 - 프롬프트 템플릿 CRUD 및 `{{변수}}` 치환
 - 대화 히스토리 유지 (멀티턴)
@@ -49,7 +49,10 @@
 ### Node.js / pnpm
 
 - **Node.js 20 이상** (v24 권장)
-- **pnpm 8 이상**
+- **pnpm 8 이상** (필수)
+
+> [!WARNING]
+> 본 프로젝트는 **pnpm 모노레포**입니다. 의존성 충돌 및 네이티브 모듈 에러를 방지하기 위해 `npm install` 대신 반드시 `pnpm install`을 사용하세요. 하위 폴더에 `package-lock.json`이 생성되지 않도록 주의해야 합니다.
 
 ```bash
 npm install -g pnpm
@@ -63,10 +66,10 @@ npm install -g @anthropic-ai/claude-code
 
 # Gemini CLI
 npm install -g @google/gemini-cli
-
-# OpenAI CLI
-pip install openai
 ```
+
+> [!TIP]
+> Gemini CLI 연동 시 내부적으로 충돌하는 구형 패키지(`gemini` 시각 테스트 도구)가 다운로드되지 않도록 백엔드 어댑터가 `--no-install` 옵션으로 자체 보호되어 있습니다. 따라서 `@google/gemini-cli`가 제대로 전역 또는 로컬 설치되어 있어야 정상 동작합니다.
 
 ---
 
@@ -113,7 +116,7 @@ spark/
 │   │
 │   └── backend/                   # Node.js + Fastify
 │       └── src/
-│           ├── adapters/          # LLM 어댑터 (Claude / Gemini / GPT)
+│           ├── adapters/          # LLM 어댑터 (Claude / Gemini)
 │           ├── executor/          # CLI 실행 엔진
 │           ├── routes/            # API 라우트
 │           ├── db/                # SQLite + Drizzle ORM
@@ -165,7 +168,7 @@ React Frontend (Vite 6 + Zustand)
          │
     Fastify Backend
          │
-    LLM 어댑터 → CLI spawn (claude / gemini / openai)
+    LLM 어댑터 → CLI spawn (claude / gemini)
          │
     ├── 보고서 모듈 (Markdown / HTML 생성 + SQLite 저장)
     └── 웹 검색 모듈 (Gemini CLI 검색 → LLM 컨텍스트 변환)
@@ -175,9 +178,8 @@ React Frontend (Vite 6 + Zustand)
 
 | LLM | 모델 |
 |-----|------|
-| Claude | claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5 |
-| Gemini | gemini-2.5-pro, gemini-2.5-flash |
-| GPT | gpt-4o, gpt-4o-mini, o3-mini |
+| Claude | claude-haiku-4-5, claude-sonnet-4-6, claude-opus-4-7 |
+| Gemini | gemini-3.1-pro-preview, gemini-3.5-flash, gemini-3.1-flash-lite |
 
 ### LLM 어댑터 추가
 
@@ -217,7 +219,7 @@ SQLite + Drizzle ORM 사용. `packages/backend/src/db/schema.ts` 참고.
 ## 로드맵
 
 ### Phase 1 — MVP
-- [x] 멀티 LLM 선택 (Claude / Gemini / GPT)
+- [x] 멀티 LLM 선택 (Claude / Gemini)
 - [x] SSE 스트리밍 응답
 - [x] 프롬프트 템플릿 CRUD
 - [x] Markdown + 코드 하이라이트

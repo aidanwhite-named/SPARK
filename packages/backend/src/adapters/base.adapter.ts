@@ -2,7 +2,7 @@
 // Base Adapter — 모든 LLM 어댑터가 구현해야 하는 인터페이스
 // ─────────────────────────────────────────────────────────────
 
-export type LLMType = 'claude' | 'gemini' | 'gpt';
+export type LLMType = 'claude' | 'gemini';
 
 export interface LLMRequest {
   prompt: string;          // 시스템 프롬프트

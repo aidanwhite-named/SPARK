@@ -257,7 +257,7 @@ export function extractClaimsFromText(pdfText: string): { number: number; text: 
   }).filter(c => c.text.length > 0 && !/^삭제\s*$/.test(c.text));
 }
 
-function normalizeClaimText(text: string): string {
+export function normalizeClaimText(text: string): string {
   // NULL 문자(\x00)를 구성 경계 보호용 임시 마커로 사용 (특허 텍스트에는 존재하지 않음)
   const BOUNDARY = '\x00';
 
@@ -270,14 +270,17 @@ function normalizeClaimText(text: string): string {
     .replace(/^[ \t]*-{1,3}\s*\d+\s*-{1,3}[ \t]*$/gm, '')
     // 페이지 범위 표시 제거 — "-- 2 of 17 --" / "- 2 of 17 -"
     .replace(/^[ \t]*-+\s*\d+\s+of\s+\d+\s*-+[ \t]*$/gm, '')
-    // 빈 줄 정리 (위 제거로 생긴 연속 빈 줄 축소)
-    .replace(/\n{3,}/g, '\n\n')
-    // ① 쉼표(또는 ", 및" / ", 또는" 등)로 끝나는 줄 뒤의 줄바꿈 → 구성 경계 보호
+    // 줄바꿈 앞뒤의 불필요한 공백 제거
+    .replace(/[ \t]*\n[ \t]*/g, '\n')
+    // 빈 줄 정리 (연속 빈 줄을 단일 개행으로 축소하여 정규 표현식 매칭 정확도 향상)
+    .replace(/\n{2,}/g, '\n')
+    // ① 쉼표(또는 ", 및" / ", 또는" 등) 또는 세미콜론으로 끝나는 줄 뒤의 줄바꿈 → 구성 경계 보호
     //    예) "획득하는 단계,\n상기"  → 경계 보존
     //        "단계, 및\n상기"        → 경계 보존
-    .replace(/(,[^\n]*)\n([가-힣])/g, `$1${BOUNDARY}$2`)
+    .replace(/([,;][ \t]*(?:및|또는|혹은)?[ \t]*)\n([가-힣a-zA-Z0-9])/g, `$1${BOUNDARY}$2`)
     // ② 조사/어미로 시작하는 줄은 앞 줄과 공백 없이 붙임 (PDF 행 분리)
-    .replace(/([가-힣])\n((?:의|에서?|에게|으로|로|이(?=[가-힣,)\s])|가(?=[가-힣,)\s])|은|는|을|를|와|과|도|만|부터|까지|아|어|여|며))/g, '$1$2')
+    //    (명사(번호) 형태의 지칭이 줄바꿈된 경우도 매칭할 수 있도록 숫자/닫는괄호 허용)
+    .replace(/([가-힣0-9)])\n((?:의|에서?|에게|으로|로|이(?=[가-힣,)\s])|가(?=[가-힣,)\s])|은|는|을|를|와|과|도|만|부터|까지|아|어|여|며))/g, '$1$2')
     // ③ 한국어-한국어 줄바꿈 처리 (PDF 행 분리)
     //    - 다음 글자가 바로 공백으로 이어지면 단어 중간 분리 → 공백 없이 붙임
     //      예) "상\n기 건물" → "상기 건물" (상기가 한 단어)
@@ -286,7 +289,6 @@ function normalizeClaimText(text: string): string {
     .replace(/([가-힣])\n([가-힣])/g, '$1 $2')
     // ④ 구성 경계 복원
     .replace(new RegExp(BOUNDARY, 'g'), '\n')
-    .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t]+/g, ' ')
     .trim();
 }

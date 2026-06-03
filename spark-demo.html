@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SPARK — 작동 데모 (선행발명 검색)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  html, body { height: 100%; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
+  /* 스트리밍 커서 깜빡임 */
+  @keyframes blink { 0%,49%{opacity:1} 50%,100%{opacity:0} }
+  .stream-caret { display:inline-block; width:7px; height:14px; background:#7c3aed; margin-left:2px; vertical-align:-2px; animation:blink 1s steps(1) infinite; }
+  .spin { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* 마크다운 본문 간격 */
+  .md h3 { font-size:.8rem; font-weight:700; color:#3730a3; margin:.9rem 0 .35rem; }
+  .md p  { font-size:.78rem; color:#374151; line-height:1.6; margin:.3rem 0; }
+  .md ul { margin:.2rem 0 .4rem; padding-left:1.1rem; list-style:disc; }
+  .md li { font-size:.78rem; color:#374151; line-height:1.55; margin:.1rem 0; }
+  .md strong { color:#111827; font-weight:700; }
+  .md table { width:100%; border-collapse:collapse; margin:.4rem 0; font-size:.72rem; }
+  .md th, .md td { border:1px solid #e5e7eb; padding:.35rem .5rem; text-align:left; }
+  .md th { background:#f9fafb; font-weight:600; color:#4b5563; }
+  ::-webkit-scrollbar { width:8px; height:8px; }
+  ::-webkit-scrollbar-thumb { background:#d1d5db; border-radius:4px; }
+</style>
+</head>
+<body class="bg-gray-100">
+
+<!-- 데모 안내 배너 -->
+<div class="text-center text-[11px] text-gray-500 bg-amber-50 border-b border-amber-200 py-1.5 px-4">
+  ⚡ SPARK 정적 데모 — 실제 React 컴포넌트 코드·스타일을 그대로 반영한 "작동 중" 화면 재현입니다. (GPT 제거됨 · Claude / Gemini 2종)
+</div>
+
+<div class="flex flex-col bg-white overflow-hidden" style="height: calc(100vh - 29px);">
+
+  <!-- ══════════ 상단 바 ══════════ -->
+  <div class="flex items-center gap-3 px-4 py-2 border-b border-gray-200 bg-white shrink-0">
+    <!-- 로고 + 프롬프트 관리 -->
+    <div class="flex items-center gap-2.5 shrink-0">
+      <div class="flex items-center gap-1.5">
+        <div class="w-6 h-6 bg-violet-600 rounded-md flex items-center justify-center">
+          <!-- Zap -->
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        </div>
+        <span class="text-sm font-bold text-gray-800 tracking-tight">SPARK</span>
+      </div>
+      <div class="w-px h-4 bg-gray-200"></div>
+      <button class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-gray-500 hover:text-gray-800 hover:bg-gray-100 transition-colors">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        프롬프트 관리
+      </button>
+    </div>
+
+    <div class="w-px h-4 bg-gray-200"></div>
+
+    <!-- LLM 선택기 (Claude / Gemini) -->
+    <div class="flex items-center gap-1.5">
+      <!-- Claude (비활성) -->
+      <button class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors">
+        <span class="w-2 h-2 rounded-full bg-orange-400"></span>
+        <span class="text-xs font-medium">Claude</span>
+        <!-- online -->
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M2 8.82a15 15 0 0 1 20 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
+      </button>
+      <!-- Gemini (활성/선택됨) -->
+      <button class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-violet-300 bg-violet-50 ring-1 ring-violet-200 transition-colors">
+        <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+        <span class="text-xs font-semibold text-gray-800">Gemini</span>
+        <span class="text-[10px] font-mono text-violet-600 bg-white border border-violet-200 rounded px-1.5 py-0.5">gemini-3.5-flash</span>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M2 8.82a15 15 0 0 1 20 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+    </div>
+
+    <div class="flex-1"></div>
+
+    <!-- 우측: 파일 정보 + 액션 -->
+    <div class="flex items-center gap-2 shrink-0">
+      <span class="text-xs text-gray-400 hidden sm:inline truncate max-w-[220px]">비산수·분진 제거 집진 장치 · 독립항 2개 · 총 7항</span>
+      <button class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-violet-300 text-violet-700 hover:bg-violet-50 transition-colors">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M8 3H3v5"/><path d="M21 3l-7 7"/><path d="M3 3l7 7"/><path d="M16 21h5v-5"/><path d="M8 21H3v-5"/><path d="M21 21l-7-7"/><path d="M3 21l7-7"/></svg>
+        청구항 비교
+      </button>
+      <button class="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+        새 파일
+      </button>
+    </div>
+  </div>
+
+  <!-- ══════════ 컨텐츠 ══════════ -->
+  <div class="flex flex-1 overflow-hidden">
+
+    <!-- ─── 좌: 청구항 트리 (360px) ─── -->
+    <div class="w-[360px] shrink-0 overflow-hidden">
+      <div class="flex flex-col h-full border-r border-gray-200">
+        <!-- 헤더 -->
+        <div class="px-4 py-3 border-b border-gray-200 bg-gray-50 shrink-0">
+          <div class="flex items-center gap-1.5 mb-2 px-2 py-1 bg-white border border-gray-200 rounded-lg">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <span class="text-xs text-gray-600 truncate font-medium">공개특허_10-2023-0012345.pdf</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+            <span class="text-xs font-semibold text-gray-600 uppercase tracking-wide">청구항 트리</span>
+          </div>
+          <p class="text-xs text-gray-400 mt-0.5">총 7항 · 독립항 2개</p>
+
+          <!-- 기준일 -->
+          <div class="mt-2 flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-blue-50 border border-blue-200">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6"/><path d="M16 2v4M8 2v4M3 10h18"/><circle cx="18" cy="18" r="3"/><path d="M18 16.5V18l.5.5"/></svg>
+            <div class="min-w-0">
+              <span class="text-xs font-semibold text-blue-700">출원일</span>
+              <span class="text-xs text-blue-600 ml-1.5">2023-01-15</span>
+            </div>
+            <span class="text-[10px] text-blue-400 ml-auto shrink-0">선행발명 기준</span>
+          </div>
+
+          <!-- 비교 그룹 범례 -->
+          <div class="mt-2 space-y-1">
+            <div class="flex items-center gap-1.5">
+              <span class="w-2.5 h-2.5 rounded-full shrink-0 bg-violet-400"></span>
+              <span class="text-xs font-medium text-violet-700">그룹1</span>
+              <span class="text-xs text-gray-400">— 제1항 (장치)</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span class="w-2.5 h-2.5 rounded-full shrink-0 bg-blue-400"></span>
+              <span class="text-xs font-medium text-blue-700">그룹2</span>
+              <span class="text-xs text-gray-400">— 제1·6항 (유사)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 독립항 목록 -->
+        <div class="flex-1 overflow-y-auto py-1">
+
+          <!-- 독립항 1 (선택됨) -->
+          <div>
+            <div class="flex items-stretch border-l-2 bg-violet-50 border-violet-500">
+              <button class="flex items-start gap-2 px-3 py-2.5 text-left flex-1 min-w-0">
+                <div class="flex items-center gap-1 shrink-0 mt-0.5">
+                  <span class="w-2 h-2 rounded-full bg-violet-400"></span>
+                  <span class="text-xs font-bold px-1.5 py-0.5 rounded text-violet-700 bg-white/60">1</span>
+                </div>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-1.5 flex-wrap">
+                    <p class="text-xs font-semibold text-violet-700">독립항</p>
+                    <span class="inline-flex items-center gap-0.5 text-xs font-medium text-blue-700">
+                      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                      유사
+                    </span>
+                  </div>
+                  <p class="text-xs text-gray-400 truncate mt-0.5">비산수 및 분진을 제거하는 집진 장치로서, 덕트…</p>
+                </div>
+              </button>
+              <button class="flex items-center justify-center w-8 shrink-0 hover:bg-black/10">
+                <span class="flex flex-col items-center gap-0.5">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                  <span class="text-[9px] text-gray-400 leading-none">3</span>
+                </span>
+              </button>
+            </div>
+            <!-- 종속항 -->
+            <div class="ml-3 border-l-2 border-gray-200 py-0.5">
+              <div>
+                <button class="w-full flex items-center gap-2 px-3 py-1.5 mx-1 rounded-sm text-left hover:bg-gray-50">
+                  <div class="flex items-center gap-1 shrink-0"><span class="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">2</span></div>
+                  <p class="text-xs truncate flex-1 text-gray-400">↳ 제1항 인용</p>
+                </button>
+              </div>
+              <div>
+                <button class="w-full flex items-center gap-2 px-3 py-1.5 mx-1 rounded-sm text-left hover:bg-gray-50">
+                  <div class="flex items-center gap-1 shrink-0"><span class="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">3</span></div>
+                  <p class="text-xs truncate flex-1 text-gray-400">↳ 제1항 인용</p>
+                </button>
+                <div class="ml-3 border-l border-gray-200 py-0.5">
+                  <button class="w-full flex items-center gap-2 px-3 py-1.5 mx-1 rounded-sm text-left hover:bg-gray-50">
+                    <div class="flex items-center gap-1 shrink-0"><span class="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">5</span></div>
+                    <p class="text-xs truncate flex-1 text-gray-400">↳ 제3항 인용</p>
+                  </button>
+                </div>
+              </div>
+              <div>
+                <button class="w-full flex items-center gap-2 px-3 py-1.5 mx-1 rounded-sm text-left hover:bg-gray-50">
+                  <div class="flex items-center gap-1 shrink-0"><span class="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">4</span></div>
+                  <p class="text-xs truncate flex-1 text-gray-400">↳ 제1항 인용</p>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 독립항 6 -->
+          <div>
+            <div class="flex items-stretch border-l-2 bg-blue-50 border-transparent">
+              <button class="flex items-start gap-2 px-3 py-2.5 text-left flex-1 min-w-0 hover:bg-black/5">
+                <div class="flex items-center gap-1 shrink-0 mt-0.5">
+                  <span class="w-2 h-2 rounded-full bg-blue-400"></span>
+                  <span class="text-xs font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">6</span>
+                </div>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-1.5 flex-wrap">
+                    <p class="text-xs font-semibold text-gray-700">독립항</p>
+                    <span class="inline-flex items-center gap-0.5 text-xs font-medium text-blue-700">
+                      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                      유사
+                    </span>
+                  </div>
+                  <p class="text-xs text-gray-400 truncate mt-0.5">비산수 및 분진을 제거하는 집진 방법으로서, 공기를…</p>
+                  <div class="mt-1 flex items-center gap-1">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                    <span class="text-xs text-amber-600 truncate">차이: 카테고리 (장치 ↔ 방법)</span>
+                  </div>
+                </div>
+              </button>
+              <button class="flex items-center justify-center w-8 shrink-0 hover:bg-black/5">
+                <span class="flex flex-col items-center gap-0.5">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                  <span class="text-[9px] text-gray-400 leading-none">1</span>
+                </span>
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── 우: 청구항 상세 + 검색 ─── -->
+    <div class="flex-1 overflow-hidden">
+      <div class="flex flex-col h-full overflow-hidden">
+
+        <!-- 헤더 -->
+        <div class="px-4 py-2.5 border-b border-gray-200 bg-gray-50 flex items-center gap-2 shrink-0 flex-wrap">
+          <div class="flex items-center gap-1.5 mr-auto">
+            <span class="text-xs font-semibold text-violet-700 bg-violet-100 px-2 py-0.5 rounded">제1항 독립항</span>
+          </div>
+          <!-- 프롬프트 드롭다운 -->
+          <button class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            선행발명 검색 (기본)
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <!-- 빠른검색 (스트리밍 중이라 비활성 느낌) -->
+          <button class="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg bg-violet-600 text-white opacity-60 cursor-default">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16l3-8 3 8c-2 1.5-4 1.5-6 0"/><path d="M2 16l3-8 3 8c-2 1.5-4 1.5-6 0"/><path d="M7 21h10M12 3v18M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/></svg>
+            빠른 재검색
+          </button>
+        </div>
+
+        <!-- 청구항 구조 -->
+        <div class="shrink-0 border-b border-gray-100">
+          <button class="w-full flex items-center justify-between px-4 py-2 text-xs text-gray-500 hover:bg-gray-50 transition-colors">
+            <span class="font-medium">청구항 구조</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+          </button>
+          <div class="px-4 pb-3 space-y-1.5">
+            <!-- 어두/전제부 -->
+            <div class="flex items-start gap-2">
+              <span class="text-[10px] font-bold text-gray-400 bg-gray-100 rounded px-1.5 py-0.5 shrink-0 mt-0.5">어두</span>
+              <p class="text-xs text-gray-600 leading-relaxed flex-1">비산수 및 분진을 제거하는 집진 장치로서,</p>
+            </div>
+            <!-- 구성 A 핵심 -->
+            <div class="flex items-start gap-2">
+              <span class="text-[10px] font-bold text-violet-600 bg-violet-50 rounded px-1.5 py-0.5 shrink-0 mt-0.5">A</span>
+              <p class="text-xs text-gray-700 leading-relaxed flex-1">덕트(10)를 통하여 공기를 후단으로 유입하는 후드(20)와,</p>
+              <span class="text-[10px] font-medium rounded border px-1.5 py-0.5 shrink-0 text-rose-600 bg-rose-50 border-rose-200">★★★ 핵심</span>
+            </div>
+            <!-- 구성 B 핵심 -->
+            <div class="flex items-start gap-2">
+              <span class="text-[10px] font-bold text-violet-600 bg-violet-50 rounded px-1.5 py-0.5 shrink-0 mt-0.5">B</span>
+              <p class="text-xs text-gray-700 leading-relaxed flex-1">유입수와 분진을 제거하도록 격판(12)이 형성된 호퍼형 포트(11)와,</p>
+              <span class="text-[10px] font-medium rounded border px-1.5 py-0.5 shrink-0 text-rose-600 bg-rose-50 border-rose-200">★★★ 핵심</span>
+            </div>
+            <!-- 구성 C 보조 -->
+            <div class="flex items-start gap-2">
+              <span class="text-[10px] font-bold text-violet-600 bg-violet-50 rounded px-1.5 py-0.5 shrink-0 mt-0.5">C</span>
+              <p class="text-xs text-gray-700 leading-relaxed flex-1">유입된 공기를 이송시키기 위한 팬(13)과,</p>
+              <span class="text-[10px] font-medium rounded border px-1.5 py-0.5 shrink-0 text-amber-600 bg-amber-50 border-amber-200">★★☆ 보조</span>
+            </div>
+            <!-- 구성 D 보조 -->
+            <div class="flex items-start gap-2">
+              <span class="text-[10px] font-bold text-violet-600 bg-violet-50 rounded px-1.5 py-0.5 shrink-0 mt-0.5">D</span>
+              <p class="text-xs text-gray-700 leading-relaxed flex-1">본체(22)의 내측에 위치하는 원통형의 고정축(23)을</p>
+              <span class="text-[10px] font-medium rounded border px-1.5 py-0.5 shrink-0 text-amber-600 bg-amber-50 border-amber-200">★★☆ 보조</span>
+            </div>
+            <!-- 어미 -->
+            <div class="flex items-start gap-2">
+              <span class="text-[10px] font-bold text-gray-400 bg-gray-100 rounded px-1.5 py-0.5 shrink-0 mt-0.5">어미</span>
+              <p class="text-xs text-gray-600 leading-relaxed flex-1">포함하는 것을 특징으로 하는 집진 장치.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 채팅 / 검색 영역 -->
+        <div class="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+
+          <!-- 사용자 메시지 (검색 시작) -->
+          <div class="flex justify-end">
+            <div class="max-w-[80%] bg-violet-600 text-white text-xs leading-relaxed rounded-2xl rounded-tr-sm px-3.5 py-2.5">
+              가중치 확정 — 핵심 구성(A·B) 중심으로 선행발명 검색을 시작합니다
+            </div>
+          </div>
+
+          <!-- 가중치 확정 칩 -->
+          <div class="flex flex-wrap gap-1.5">
+            <span class="text-[10px] text-gray-400">적용 가중치:</span>
+            <span class="text-[10px] font-medium rounded border px-1.5 py-0.5 text-rose-600 bg-rose-50 border-rose-200">A 후드·덕트 ★★★</span>
+            <span class="text-[10px] font-medium rounded border px-1.5 py-0.5 text-rose-600 bg-rose-50 border-rose-200">B 호퍼형 포트 ★★★</span>
+            <span class="text-[10px] font-medium rounded border px-1.5 py-0.5 text-amber-600 bg-amber-50 border-amber-200">C 팬 ★★☆</span>
+            <span class="text-[10px] font-medium rounded border px-1.5 py-0.5 text-amber-600 bg-amber-50 border-amber-200">D 고정축 ★★☆</span>
+          </div>
+
+          <!-- 어시스턴트 스트리밍 응답 (Gemini) -->
+          <div class="flex justify-start">
+            <div class="max-w-[88%] w-full bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
+              <div class="flex items-center gap-1.5 mb-2 pb-2 border-b border-gray-100">
+                <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+                <span class="text-[11px] font-semibold text-gray-600">Gemini</span>
+                <span class="text-[10px] font-mono text-gray-400">gemini-3.5-flash</span>
+                <span class="ml-auto text-[10px] text-violet-500 flex items-center gap-1">
+                  <svg width="11" height="11" class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                  스트리밍 중
+                </span>
+              </div>
+
+              <div class="md">
+                <h3>1️⃣ 핵심 구성 가중치 반영</h3>
+                <p>본 청구항의 신규성·진보성 판단은 <strong>구성 B(격판이 형성된 호퍼형 포트)</strong> 와 <strong>구성 A(덕트–후드 유입 구조)</strong> 의 결합에 집중됩니다. 구성 C·D(팬·고정축)는 해당 기술분야의 관용 수단으로 가중치를 낮춰 반영했습니다.</p>
+
+                <h3>2️⃣ 웹 검색 — 선행문헌 수집</h3>
+                <p>출원일(<strong>2023-01-15</strong>) 이전 공개된 문헌을 대상으로 검색했습니다.</p>
+                <ul>
+                  <li><strong>KR 10-2019-0098765</strong> — "습식 집진기용 호퍼 구조" (2019 공개)</li>
+                  <li><strong>JP 2020-123456 A</strong> — "비산수 분리형 후드 덕트 장치" (2020 공개)</li>
+                  <li><strong>KR 10-1456789 B1</strong> — "원심 분리식 분진 포집 본체" (2014 등록)</li>
+                </ul>
+
+                <h3>3️⃣ 구성 대비 — 유사도 분석</h3>
+                <table>
+                  <thead>
+                    <tr><th>선행문헌</th><th>A 후드·덕트</th><th>B 호퍼형 포트</th><th>유사도</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td>KR 10-2019-0098765</td><td>△ 부분일치</td><td>○ 일치</td><td><strong>78%</strong></td></tr>
+                    <tr><td>JP 2020-123456 A</td><td>○ 일치</td><td>✕ 격판 구조 상이</td><td>54%</td></tr>
+                    <tr><td>KR 10-1456789 B1</td><td>✕</td><td>△ 유사</td><td>41%</td></tr>
+                  </tbody>
+                </table>
+
+                <h3>4️⃣ 1차 결론</h3>
+                <p><strong>KR 10-2019-0098765</strong> 가 핵심 구성 A·B를 가장 근접하게 개시(유사도 78%)하고 있어 <strong>가장 유력한 선행발명 후보</strong>입니다. 다만 본 청구항의 "<strong>상부중앙 격판(12) + 하부 포트배수구(17)</strong>" 조합이 명시적으로 개시되어 있는지<span class="stream-caret"></span></p>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- 입력창 -->
+        <div class="shrink-0 border-t border-gray-200 px-4 py-3 bg-white">
+          <div class="flex items-end gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 focus-within:border-violet-300 focus-within:bg-white transition-colors">
+            <textarea rows="1" placeholder="후속 질문을 입력하세요 — 예: 'KR 10-2019-0098765의 격판 구조를 더 자세히 비교해줘'" class="flex-1 resize-none bg-transparent text-xs text-gray-700 placeholder-gray-400 outline-none leading-relaxed py-1"></textarea>
+            <button class="flex items-center justify-center w-8 h-8 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors shrink-0">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
+          <p class="text-[10px] text-gray-400 mt-1.5 text-center">Enter 전송 · Shift+Enter 줄바꿈 · 멀티턴 대화로 검색 범위를 좁혀가세요</p>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

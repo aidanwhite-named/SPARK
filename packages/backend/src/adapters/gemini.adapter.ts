@@ -8,8 +8,9 @@ export class GeminiAdapter extends BaseLLMAdapter {
   private executor: CLIExecutor;
 
   private readonly models = [
-    'gemini-2.5-pro',
-    'gemini-2.5-flash',
+    'gemini-3.1-pro-preview',
+    'gemini-3.5-flash',
+    'gemini-3.1-flash-lite',
   ];
 
   constructor() {
@@ -23,7 +24,7 @@ export class GeminiAdapter extends BaseLLMAdapter {
 
   async isAvailable(): Promise<boolean> {
     try {
-      await this.executor.run('gemini', ['--version'], { timeout: 5000 });
+      await this.executor.run('npx', ['--no-install', 'gemini', '--version'], { timeout: 15000 });
       return true;
     } catch {
       return false;
@@ -35,15 +36,13 @@ export class GeminiAdapter extends BaseLLMAdapter {
     const finalPrompt = this.buildFinalPrompt(request);
     const model = request.model ?? '(default)';
     console.log(`[Gemini:complete] model=${model} | prompt=${finalPrompt.length} bytes`);
-    const args: string[] = [];
+    const args: string[] = ['--no-install', 'gemini'];
     if (request.model) {
       args.push('--model', request.model);
     }
 
-    // Gemini CLI는 스트리밍 기반이므로 executor.run()(블로킹) 대신
-    // executor.stream()으로 출력을 수집 — 모델 응답이 오는 즉시 읽기 시작
     let content = '';
-    await this.executor.stream('gemini', args, (line) => {
+    await this.executor.stream('npx', args, (line) => {
       content += line + '\n';
     }, { stdinData: finalPrompt });
 
@@ -62,14 +61,14 @@ export class GeminiAdapter extends BaseLLMAdapter {
     const model = request.model ?? '(default)';
     const t0 = Date.now();
     console.log(`[Gemini:stream] model=${model} | prompt=${finalPrompt.length} bytes`);
-    const args: string[] = [];
+    const args: string[] = ['--no-install', 'gemini'];
     if (request.model) {
       args.push('--model', request.model);
     }
 
     let buffer = '';
     let firstChunk = false;
-    await this.executor.stream('gemini', args, (line) => {
+    await this.executor.stream('npx', args, (line) => {
       if (!firstChunk) {
         firstChunk = true;
         console.log(`[Gemini:stream] ✏️  first chunk at +${Date.now() - t0}ms`);

@@ -1,4 +1,4 @@
-export type LLMType = 'claude' | 'gemini' | 'gpt';
+export type LLMType = 'claude' | 'gemini';
 
 export interface Prompt {
   id: string;

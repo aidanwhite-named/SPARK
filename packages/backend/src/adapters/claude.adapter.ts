@@ -8,9 +8,9 @@ export class ClaudeAdapter extends BaseLLMAdapter {
   private executor: CLIExecutor;
 
   private readonly models = [
+    'claude-haiku-4-5-20251001',
     'claude-sonnet-4-6',
     'claude-opus-4-7',
-    'claude-haiku-4-5-20251001',
   ];
 
   private readonly completeTimeoutMs = 45_000;
@@ -65,6 +65,11 @@ export class ClaudeAdapter extends BaseLLMAdapter {
       maxStderrBytes: 80_000,
     });
 
+    if (result.exitCode !== 0) {
+      const errMsg = result.stdout.trim() || result.stderr.trim() || `Claude CLI exited with code ${result.exitCode}`;
+      throw new Error(errMsg);
+    }
+
     const durationMs = Date.now() - start;
     console.log(`[Claude:complete] done in ${durationMs}ms | response=${result.stdout.trim().length} bytes`);
 
@@ -105,8 +110,13 @@ export class ClaudeAdapter extends BaseLLMAdapter {
       try {
         const parsed = JSON.parse(line);
 
-        if (parsed.type === 'error') {
-          throw new Error(parsed.error?.message ?? parsed.message ?? 'Claude stream error');
+        if (parsed.type === 'error' || parsed.error) {
+          throw new Error(
+            parsed.message?.content?.[0]?.text ??
+            parsed.error?.message ??
+            parsed.message ??
+            (typeof parsed.error === 'string' ? parsed.error : 'Claude stream error')
+          );
         }
 
         if (parsed.type === 'assistant' && parsed.message?.content) {

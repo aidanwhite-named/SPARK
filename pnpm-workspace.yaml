@@ -1,5 +1,8 @@
 packages:
   - 'packages/*'
 allowBuilds:
-  bcrypt: false
+  '@github/keytar': true
   esbuild: true
+  node-pty: true
+minimumReleaseAgeExclude:
+  - '@google/gemini-cli@0.45.0'

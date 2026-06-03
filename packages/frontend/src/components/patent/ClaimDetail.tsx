@@ -84,6 +84,7 @@ export function ClaimDetail() {
     if (!selectedTree) return '';
     startStreaming(claimNumber);
     let accumulated = '';
+    let errorMsg: string | null = null;
 
     try {
       setErrorKind('search');
@@ -127,7 +128,11 @@ export function ClaimDetail() {
             appendStreamChunk(claimNumber, evt.content);
           }
           else if (evt.type === 'done') finalizeStreaming(claimNumber);
-          else if (evt.type === 'error') { setError(evt.error); finalizeStreaming(claimNumber); }
+          else if (evt.type === 'error') {
+            errorMsg = evt.error;
+            setError(evt.error);
+            finalizeStreaming(claimNumber);
+          }
         } catch { /* skip */ }
       };
 
@@ -140,12 +145,17 @@ export function ClaimDetail() {
         for (const l of lines) processLine(l);
       }
       if (buf.trim()) buf.split('\n').forEach(processLine);
+
+      if (errorMsg) {
+        throw new Error(errorMsg);
+      }
+
       finalizeStreaming(claimNumber);
       return accumulated;
     } catch (e) {
       setError(String(e));
       finalizeStreaming(claimNumber);
-      return accumulated;
+      throw e;
     }
   }, [selectedTree, selectedDependent, claimNumber, selectedLLM, selectedModel, pdfText, contextText,
       contextSource, selectedPrompt, startStreaming, appendStreamChunk, finalizeStreaming, setError]);
@@ -178,9 +188,13 @@ export function ClaimDetail() {
       displayLabel,
     });
 
-    const result = await streamSearch([{ role: 'user', content: '__FAST_SEARCH_START__' }], undefined, 'fast');
-    setFastResult(result);
-    setPhase(hasHighSimilarityCandidate(result) ? 'idle' : 'fastReview');
+    try {
+      const result = await streamSearch([{ role: 'user', content: '__FAST_SEARCH_START__' }], undefined, 'fast');
+      setFastResult(result);
+      setPhase(hasHighSimilarityCandidate(result) ? 'idle' : 'fastReview');
+    } catch (e) {
+      setPhase('idle');
+    }
   }, [isStreaming, phase, selectedTree, selectedPrompt, claimNumber, selectedLLM,
       clearChat, clearWeights, addMessage, streamSearch, setError]);
 
@@ -246,8 +260,12 @@ export function ClaimDetail() {
     };
     addMessage(claimNumber, userMsg);
 
-    await streamSearch([{ role: 'user', content: '__SEARCH_START__' }], weights, 'precise', fastResult);
-  }, [selectedTree, weights, selectedPrompt, claimNumber, addMessage, streamSearch]);
+    try {
+      await streamSearch([{ role: 'user', content: '__SEARCH_START__' }], weights, 'precise', fastResult);
+    } catch (e) {
+      setPhase('idle');
+    }
+  }, [selectedTree, weights, selectedPrompt, claimNumber, addMessage, streamSearch, fastResult]);
 
   // 멀티턴 추가 질문
   const handleSend = useCallback(async () => {
@@ -262,7 +280,11 @@ export function ClaimDetail() {
     };
     addMessage(claimNumber, userMsg);
     const history = getHistoryForSend(text);
-    await streamSearch(history, undefined, 'precise', fastResult);
+    try {
+      await streamSearch(history, undefined, 'precise', fastResult);
+    } catch (e) {
+      setPhase('idle');
+    }
   }, [input, isStreaming, addMessage, claimNumber, getHistoryForSend, streamSearch, fastResult]);
 
   const handleLLMAnalyze = useCallback(async () => {
@@ -462,7 +484,7 @@ export function ClaimDetail() {
             <div className="text-center">
               <p className="text-sm font-medium">구성 가중치 분석 중</p>
               <p className="text-xs text-gray-400 mt-1">
-                {selectedLLM === 'gemini' ? 'Gemini Flash' : selectedLLM === 'gpt' ? 'GPT-4o Mini' : 'Claude Haiku'}
+                {selectedLLM === 'gemini' ? 'Gemini Flash' : 'Claude Haiku'}
                 가 각 구성의 핵심도를 판단하고 있습니다
               </p>
             </div>
@@ -474,7 +496,7 @@ export function ClaimDetail() {
           <WeightTable
             weights={weights}
             claimNumber={claimNumber}
-            llmName={selectedLLM === 'gemini' ? 'Gemini Flash' : selectedLLM === 'gpt' ? 'GPT-4o Mini' : 'Claude Haiku'}
+            llmName={selectedLLM === 'gemini' ? 'Gemini Flash' : 'Claude Haiku'}
             onWeightChange={(i, w) => updateWeight(claimNumber, i, w)}
             onSearch={handleSearchWithWeights}
           />
