@@ -848,7 +848,7 @@ function ClaimPartRow({ part }: { part: ClaimPart }) {
     return (
       <div className="flex gap-2.5 items-start">
         <span className="text-xs font-bold text-blue-600 bg-blue-50 border border-blue-200
-          px-1.5 py-0.5 rounded shrink-0 mt-0.5 min-w-[2rem] text-center">어두</span>
+          px-1.5 py-0.5 rounded shrink-0 mt-0.5 min-w-[2rem] text-center">(전제부)</span>
         <p className="text-xs text-gray-700 leading-relaxed">{part.text}</p>
       </div>
     );
@@ -857,7 +857,7 @@ function ClaimPartRow({ part }: { part: ClaimPart }) {
     return (
       <div className="flex gap-2.5 items-start">
         <span className="text-xs font-bold text-green-600 bg-green-50 border border-green-200
-          px-1.5 py-0.5 rounded shrink-0 mt-0.5 min-w-[2rem] text-center">어미</span>
+          px-1.5 py-0.5 rounded shrink-0 mt-0.5 min-w-[2rem] text-center">(어미)</span>
         <p className="text-xs text-gray-700 leading-relaxed">{part.text}</p>
       </div>
     );

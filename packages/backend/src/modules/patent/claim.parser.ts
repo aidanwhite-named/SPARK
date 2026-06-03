@@ -6,6 +6,7 @@ import {
   ParsedIndependentClaim,
   PatentParseResult,
 } from './patent.types.js';
+import { extractRefNumbers } from './claim.refs.js';
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
@@ -104,10 +105,9 @@ function buildComponents(chunks: string[]): ClaimPart[] {
   const parts: ClaimPart[] = [];
   let labelIdx = 0;
   for (const chunk of chunks) {
-    // 선행/후행 "및", "또는", 쉼표 제거
+    // 선두의 "및"/"또는"/"," 만 제거 (후행 "및"은 구성 간 연결자이므로 보존)
     const clean = chunk
       .replace(/^(?:및|또는|,)\s*/, '')
-      .replace(/[,\s]+(?:및|또는)\s*$/, '')
       .trim();
     if (!clean) continue;
     const simple = isSimple(clean);
@@ -175,17 +175,6 @@ function parseIndependent(number: number, rawText: string): ParsedIndependentCla
   return { number, type: 'independent', rawText, parts, needsLLM };
 }
 
-// 종속항 인용 번호 추출 — "제N항" 및 "청구항 N" 형식 모두 지원
-function extractRefNumbers(text: string): number[] {
-  const nums: number[] = [];
-  let m: RegExpExecArray | null;
-  const re1 = /제\s*(\d+)\s*항/g;
-  while ((m = re1.exec(text)) !== null) nums.push(parseInt(m[1], 10));
-  const re2 = /청구항\s*(\d+)/g;
-  while ((m = re2.exec(text)) !== null) nums.push(parseInt(m[1], 10));
-  return [...new Set(nums)];
-}
-
 function parseClaims(claimTexts: { number: number; text: string }[]): ParsedClaim[] {
   return claimTexts.map(({ number, text }) => {
     // 종속항 판별 — "제N항에 있어서" 및 "청구항 N에 있어서" 형식 모두 지원
@@ -247,28 +236,22 @@ export function extractClaimsFromText(pdfText: string): { number: number; text: 
   // "제N항." / "제N항:" 형식도 지원
   const HEADER_RE = /(?:\[?청구항\s*제?\s*(\d+)\s*항?\]?[ \t]*(?:\n|$)|제\s*(\d+)\s*항[ \t]*[.:][ \t]*(?:\n|$))/gm;
 
-  const headers: { number: number; headerEnd: number }[] = [];
+  // 헤더의 번호와 시작/끝 위치를 한 번의 스캔으로 수집
+  const headers: { number: number; start: number; end: number }[] = [];
   let m: RegExpExecArray | null;
   while ((m = HEADER_RE.exec(claimsSection)) !== null) {
     const num = parseInt(m[1] ?? m[2], 10);
     if (!isNaN(num)) {
-      headers.push({ number: num, headerEnd: m.index + m[0].length });
+      headers.push({ number: num, start: m.index, end: m.index + m[0].length });
     }
   }
 
   if (headers.length === 0) return [];
 
-  // 다음 헤더의 시작 위치 — 현재 청구항 텍스트의 끝으로 사용
-  const HEADER_RE2 = /(?:\[?청구항\s*제?\s*(\d+)\s*항?\]?[ \t]*(?:\n|$)|제\s*(\d+)\s*항[ \t]*[.:][ \t]*(?:\n|$))/gm;
-  const headerRanges: { start: number; end: number }[] = [];
-  while ((m = HEADER_RE2.exec(claimsSection)) !== null) {
-    headerRanges.push({ start: m.index, end: m.index + m[0].length });
-  }
-
   return headers.map((h, i) => {
-    const textStart = h.headerEnd;
+    const textStart = h.end;
     // 다음 청구항 헤더의 '시작' 위치까지를 이번 청구항 텍스트로 사용
-    const textEnd = i + 1 < headerRanges.length ? headerRanges[i + 1].start : claimsSection.length;
+    const textEnd = i + 1 < headers.length ? headers[i + 1].start : claimsSection.length;
     const rawText = claimsSection.slice(textStart, textEnd).trim();
     return { number: h.number, text: normalizeClaimText(rawText) };
   }).filter(c => c.text.length > 0 && !/^삭제\s*$/.test(c.text));
@@ -295,7 +278,11 @@ function normalizeClaimText(text: string): string {
     .replace(/(,[^\n]*)\n([가-힣])/g, `$1${BOUNDARY}$2`)
     // ② 조사/어미로 시작하는 줄은 앞 줄과 공백 없이 붙임 (PDF 행 분리)
     .replace(/([가-힣])\n((?:의|에서?|에게|으로|로|이(?=[가-힣,)\s])|가(?=[가-힣,)\s])|은|는|을|를|와|과|도|만|부터|까지|아|어|여|며))/g, '$1$2')
-    // ③ 나머지 한국어-한국어 줄바꿈은 PDF 행 분리 → 공백으로 대체
+    // ③ 한국어-한국어 줄바꿈 처리 (PDF 행 분리)
+    //    - 다음 글자가 바로 공백으로 이어지면 단어 중간 분리 → 공백 없이 붙임
+    //      예) "상\n기 건물" → "상기 건물" (상기가 한 단어)
+    //    - 그 외 경우는 단어 경계 → 공백 삽입
+    .replace(/([가-힣])\n([가-힣])( )/g, '$1$2$3')
     .replace(/([가-힣])\n([가-힣])/g, '$1 $2')
     // ④ 구성 경계 복원
     .replace(new RegExp(BOUNDARY, 'g'), '\n')

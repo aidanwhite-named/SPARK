@@ -178,8 +178,8 @@ ${dependentClaimText}
 export function formatClaimStructure(claimParts: ClaimPart[], claimNumber: number): string {
   const lines = [`[분석 대상 청구항 — 제${claimNumber}항 독립항]`];
   for (const part of claimParts) {
-    if (part.kind === 'preamble') lines.push(`어두: ${part.text}`);
-    else if (part.kind === 'tail') lines.push(`어미: ${part.text}`);
+    if (part.kind === 'preamble') lines.push(`(전제부) ${part.text}`);
+    else if (part.kind === 'tail') lines.push(`(어미) ${part.text}`);
     else {
       // label 있는 구성: (A) 텍스트 / label 없는 단순 구성: [단순구성] 텍스트
       const prefix = part.label ? `(${part.label})` : '[단순구성]';

@@ -5,6 +5,14 @@ import { promptRoutes } from './routes/prompt.routes.js';
 import { patentRoutes } from './routes/patent.routes.js';
 import { initializeDB } from './db/db.js';
 
+// 미처리 예외·거부가 서버 프로세스를 죽이지 않도록
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err.message);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});
+
 const app = Fastify({ logger: false, bodyLimit: 10 * 1024 * 1024 }); // 10MB — PDF text can be large
 
 // ── DB 초기화 ─────────────────────────────────────────────

@@ -15,15 +15,6 @@ export const db = drizzle(client, { schema });
 // ── 테이블 초기화 ─────────────────────────────────────────────
 export async function initializeDB() {
   await client.executeMultiple(`
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      email TEXT NOT NULL UNIQUE,
-      password TEXT NOT NULL,
-      name TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
-    );
-
     CREATE TABLE IF NOT EXISTS prompts (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -34,47 +25,6 @@ export async function initializeDB() {
       is_system INTEGER DEFAULT 0,
       sort_order INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS sessions (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL DEFAULT '새 대화',
-      llm_type TEXT NOT NULL,
-      prompt_id TEXT REFERENCES prompts(id),
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS messages (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      role TEXT NOT NULL,
-      content TEXT NOT NULL,
-      llm_type TEXT,
-      prompt_id TEXT,
-      token_count INTEGER,
-      duration_ms INTEGER,
-      metadata TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS reports (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      session_id TEXT REFERENCES sessions(id),
-      content TEXT NOT NULL,
-      format TEXT NOT NULL DEFAULT 'markdown',
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS llm_configs (
-      id TEXT PRIMARY KEY,
-      llm_type TEXT NOT NULL UNIQUE,
-      cli_path TEXT,
-      default_model TEXT,
-      options TEXT,
-      is_enabled INTEGER DEFAULT 1,
       updated_at TEXT DEFAULT (datetime('now'))
     );
   `);

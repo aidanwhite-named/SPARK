@@ -118,16 +118,14 @@ spark/
 │           ├── routes/            # API 라우트
 │           ├── db/                # SQLite + Drizzle ORM
 │           └── modules/
-│               ├── patent/        # 선행발명 검색 모듈
-│               │   ├── pdf.extractor.ts       # PDF 텍스트 추출
-│               │   ├── url.fetcher.ts         # URL 내용 가져오기
-│               │   ├── claim.parser.ts        # 청구항 파싱
-│               │   ├── llm.analyzer.ts        # LLM 분석 프롬프트
-│               │   └── claim.comparator.ts    # 청구항 비교 분석
-│               ├── report/        # 보고서 생성 모듈
-│               │   └── report.module.ts       # Markdown / HTML 보고서 생성
-│               └── web-search/    # 웹 검색 통합 모듈
-│                   └── search.module.ts       # 검색 공급자 추상화 + 파이프라인
+│               └── patent/        # 선행발명 검색 모듈
+│                   ├── pdf.extractor.ts       # PDF 텍스트 추출
+│                   ├── url.fetcher.ts         # URL 내용 가져오기
+│                   ├── claim.parser.ts        # 청구항 파싱
+│                   ├── claim.validator.ts     # 청구항 정적 검증 (rules/)
+│                   ├── date.extractor.ts      # 출원·우선일 추출
+│                   ├── llm.analyzer.ts        # LLM 분석 프롬프트
+│                   └── claim.comparator.ts    # 청구항 비교 분석
 │
 └── pnpm-workspace.yaml
 ```
@@ -194,18 +192,6 @@ export class OllamaAdapter extends BaseLLMAdapter {
 }
 ```
 
-### 검색 공급자 교체
-
-`search.module.ts`의 `SearchProvider` 인터페이스를 구현하면 됩니다:
-
-```typescript
-export class SerpAPIProvider implements SearchProvider {
-  readonly name = 'serpapi';
-  async search(query: SearchQuery): Promise<SearchResult[]> { /* ... */ }
-  async isAvailable(): Promise<boolean> { /* ... */ }
-}
-```
-
 ---
 
 ## 환경 변수
@@ -225,9 +211,6 @@ SQLite + Drizzle ORM 사용. `packages/backend/src/db/schema.ts` 참고.
 | 테이블 | 용도 |
 |--------|------|
 | `prompts` | 프롬프트 템플릿 CRUD |
-| `sessions` | 대화 세션 |
-| `messages` | 메시지 히스토리 |
-| `reports` | 생성된 보고서 |
 
 ---
 
