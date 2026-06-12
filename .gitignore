@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local runtime directories
+uploads/
+results/
+logs/
+
+# Environments & OS files
+.env
+.venv
+venv/
+ENV/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

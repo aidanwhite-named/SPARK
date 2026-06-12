@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="SPARK">
+  <rect x="12" y="12" width="104" height="104" rx="26" fill="#0f766e"/>
+  <path d="M64 25 74.5 53.5 103 64 74.5 74.5 64 103 53.5 74.5 25 64 53.5 53.5 64 25Z" fill="#ffffff"/>
+  <path d="M64 43 70 58 85 64 70 70 64 85 58 70 43 64 58 58 64 43Z" fill="#0f766e"/>
+  <circle cx="64" cy="64" r="5.5" fill="#a7f3d0"/>
+</svg>
