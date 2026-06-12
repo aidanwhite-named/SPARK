@@ -54,15 +54,15 @@
                 <span>agent 모델</span>
                 <select id="modelPreset"></select>
               </label>
-              <label class="field">
+              <label class="field" style="display: none;">
                 <span>실행 파일</span>
                 <input name="cli_executable" id="cliExecutable" value="{{ defaults.cli_executable }}" />
               </label>
-              <label class="field">
+              <label class="field" style="display: none;">
                 <span>프롬프트 옵션</span>
                 <input name="prompt_option" value="{{ defaults.prompt_option }}" />
               </label>
-              <label class="field wide-setting">
+              <label class="field wide-setting" style="display: none;">
                 <span>직접 입력 모델명</span>
                 <input name="model" id="modelInput" value="{{ defaults.model }}" placeholder="프리셋 선택 또는 직접 입력" />
               </label>

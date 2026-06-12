@@ -39,12 +39,12 @@ AI_PROVIDERS = {
     "gemini": {
         "label": "Gemini CLI",
         "executable": "gemini",
-        "models": ["gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-3.1-pro-preview"],
+        "models": ["gemini-3.5-flash", "gemini-3.1-pro", "gemini-3.1-flash-lite"],
     },
     "gpt": {
         "label": "GPT CLI",
         "executable": "gpt",
-        "models": ["gpt-5", "gpt-5-mini", "gpt-4.1", "gpt-4.1-mini"],
+        "models": ["gpt-5.5", "gpt-5.5-pro", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"],
     },
 }
 
@@ -1033,4 +1033,4 @@ def history_clear():
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5050, debug=False)
+    app.run(host="127.0.0.1", port=5050, debug=True)
